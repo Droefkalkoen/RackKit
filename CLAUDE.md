@@ -4,18 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repository is **pre-implementation**. There is no source code, build system, or test
-suite yet — only:
+Implementation has started with the Blender-independent layers. Repository contents:
 
 - `Blender_RE_Plugin_Design.md` — the full design document (v0.2 draft) for RE-Blend and the
   authoritative specification to build from. Read it before doing implementation work; it is
   self-contained and every section number referenced below points into it.
+- `ROADMAP.md` — implementation order and milestone exit criteria (M0–M4). Where it disagrees
+  with the design doc, the design doc wins and the roadmap gets fixed.
+- `README.md` — public-facing overview; keep it consistent with the design doc.
+- `reblend/` — the extension package (import name `reblend`; distribution/repo name `re-blend`).
+  Only `project/lua_reader.py` (sandboxed GUI2D Lua reading) exists so far.
+- `tests/` — pytest suite with SDK-convention fixtures under `tests/fixtures/`.
+- `blender_manifest.toml` — Blender 4.2 LTS+ extension manifest; `pyproject.toml` is dev
+  tooling only (RE-Blend is never pip-installed into Blender).
 - `SDK_v4.6.0/` — a vendored, read-only copy of the Reason Rack Extension (Jukebox) SDK,
-  kept as reference material. RE-Blend reads/writes the *user's* RE project files; it does not
+  kept as reference material (only `API/`, `Documentation/`, `Licenses/` — the example devices
+  are *not* vendored). RE-Blend reads/writes the *user's* RE project files; it does not
   bundle or link this SDK. Do not treat SDK files as something to modify.
+- License is **GPL-3.0-or-later** (`LICENSE`); the vendored SDK stays under Reason Studios'
+  own terms.
 
-Because no code exists, there are no build/lint/test commands to document yet. When the first
-code lands, this file should be updated with the real commands.
+## Commands
+
+```sh
+pip install -e ".[dev]"       # or: pip install lupa pytest
+python3 -m pytest             # run the test suite (no Blender needed)
+python3 -m pytest tests/test_device_2d.py::test_knob_node   # single test
+```
+
+The `reblend.project` layer is pure Python and must stay importable and testable without
+`bpy`. Code that needs Blender imports `bpy` lazily inside the modules that use it; the
+render-path milestones (M0 spike onward) additionally need a machine with Blender 4.2 LTS+,
+which headless CI containers typically don't have — keep the Blender-dependent and
+Blender-independent work separable.
 
 ## What RE-Blend is
 
@@ -106,6 +127,11 @@ product, not an opaque binary drop.
 - Development happens against a **pilot project** (a real in-flight RE); milestone exit criteria
   (design §11, M0–M4) are phrased against it. Anything the pilot needs that RE-Blend can't do is a
   design bug in the document, not just a missing feature.
+- Two ordering rules from `ROADMAP.md` shape what to build next: **the riskiest assumption goes
+  first** (straight-alpha PNG output is proven in M0, with RE2DRender as the acceptance test,
+  before anything is built on top), and **nothing writes to a Lua file until round-tripping is
+  proven** — read-only first, patch mode only with interop fixtures in place, layout editing
+  only after patch mode has an M2 track record.
 - When a domain assumption is uncertain, the ground truth is **what RE2DRender accepts and what
   RE2DPreview/Recon display** — verify empirically and capture the finding in RE-Blend's own docs
   (they become the reference the SDK lacks).

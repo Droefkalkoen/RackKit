@@ -1,0 +1,173 @@
+--------------------------
+CHECKLIST
+--------------------------
+
+REASON VERSIONS - - - - - - - - - - - - - - - - - - - - - - -
+
+[] The device conforms to this checklist in latest Reason Testing
+[] The device starts and has reasonable performance in latest Reason Deployment
+
+ARCHIVE - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+[] No unnecessary file(s) in U45 archive
+[] Public samples are wav or aif (other types are not allowed)
+
+GRAPHICS - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Panels
+[] Recommended: Shadows for widgets look OK (overlapping shadows have a risk of looking weird)
+[] Recommended: Secondary light glow looks OK (light from strong lamps/LEDs bouncing of other widgets)
+[] Recommended: No shadows / secondary light glow across panel boundaries
+[] No text or graphics underneath the placeholder widget
+[] All hideable panels look OK (check all panels)
+[] All widget hit boxes (automation rectangles) are reasonably sized (To automate all parameters in one go: hold Alt while clicking Parameter Automation popup in Track List, and then select any parameter. Or check using by enabling Reason boundaries with hitboxes in RED.)
+[] All texts (labels, logos etc) are readable. Text that is purely decorative does not have to be readable, but it should be very clear if the text should be readable or not.
+
+GUI is built with 3D
+[] Recommended: All textures have appropriate pixel density
+[] Recommended: All geometries have sufficient detail - zoom in max in RED to check
+[] All GUI animations for 3D objects are plausible
+
+Required device parts
+[] Device name widget is present on all panels
+[] Recommended: Screws are aligned with rack holes
+
+Plausibility
+[] Recommended: The device is plausible and "fits" into the Reason rack
+[] GUI does not interfere with system graphics in Reason
+[] GUI is acceptable with respect to promotion/advertising/logo size
+[] Thumbnail for Reason browser must be a snapshot of the device. No extra text, logo etc. is allowed.
+
+GENERAL BEHAVIOR - - - - - - - - - - - - - - - - - - - - - -
+
+Naming
+[] Do the device names make sense and match (Create menu vs panel graphics)?
+[] Does the device name have a descriptive suffix name (like SubTractor Analog Synthesizer)? 
+[] Does the device name have capitalized letters for each word?
+
+Creating
+[] Is the device of the right type (Instruments, Effects, Utilities, Players)?
+[] When the device is created, instruments typically get a sequencer track - other device types do not
+[] Does the device work/sound OK with initial parameter values (after Reset Device)?
+
+Device Categories
+[] Do the device categories make sense and comply with the guidelines?
+
+Parameters and Remote
+[] Do the parameter names make sense?
+[] Are all parameters remotable? Parameters in Custom Displays may not be.
+[] Are the Remote names user friendly? (Test only for new devices, using "Edit Remote Override Mapping" on context menu.)
+[] Which parameters are automatable? Typically, meter modes, RUN buttons, and "empty" parameters that do not affect the sound should not be automatable.
+[] Proper grouping of automation parameters - check the parameter menus in the Track List or Combi programmer. Flat list should be max 20 items. Categories should have more than one entry (no single parameter in a group).
+[] Verify that no parameters on the back panel are automatable via a placeholder on the front panel.
+
+Usage and performance
+[] Does the device work/sound OK in both STOP and PLAY? When stopping, sounding notes from MIDI keyboard and/or sequencer should be killed.
+[] Reasonable CPU load - can it be used in a typical song?
+
+DEVICE TYPE SPECIFIC BEHAVIOUR - - - - - - - - - - - - - - - -
+
+Instruments
+[] Does it respect the master tuning in the preferences? Not needed for CV-only instruments.
+[] Does it have a working Note On indicator on folded and un-folded front panels?
+[] Recommended: Does it have CV Gate/Note inputs? Are these auto-routed?
+[] Does it support CV Gate/Note support polyphonic CV correctly? (test with MIDI through RPG-8).
+
+FX
+[] Correct auto-routing: Mono in should give mono out (unless the device generates stereo)
+[] Routing icons are present on the back panel
+[] On/Off/Bypass fader is present on front and folded front panels
+[] When inside Combinator, pressing Bypass All FX should set device to Bypass
+
+Players
+Check that MIDI notes are bypassed (or treated) correctly in the following circumstances:
+[] A) If player is a sequencer (or similar self-generating type), it should still bypass incoming MIDI when set to ON
+[] B) Player is set to OFF - incoming MIDI should always be bypassed
+[] C) Bypass All - player is bypassed by host, but should stop generating MIDI and CV
+[] On/Off buttonis present on front panel.
+[] On/Off state should not be saved in the patch. 
+[] When player is set to OFF, notes that it has generated should be killed.
+[] Recommended: When player is set to OFF, Bypass All or null pattern, device should look disabled.
+[] Recommended: Does it have CV Gate/Note inputs? Please note that there is no auto-routing for players.
+[] Recommended: Does it support CV Gate/Note support polyphonic CV correctly? (test with MIDI through RPG-8).
+[] Direct Record should work as expected.
+[] Send To Track should work as expected.
+[] If Player has a Hold button or similar, playback should turn off when receiving Audio Reset (i.e. when exporting)
+
+FEATURE SPECIFIC BEHAVIOUR - - - - - - - - - - - - - - - - - - 
+
+Device supports patches
+Note: Even if a device does not support patches directly, the sound bank can contain Combinator patches.
+[] Patch display is present on front and folded front panel (no folded panel on Players)
+[] Is there a Default Patch?
+[] Are the included patches sufficient (depending on device type) and well organized?
+[] Root folder contains some example patches (5-20)
+[] Which parameters are affected when you load a patch? (Reverb/Delay Dry/Wet and RUN are typically not)
+
+Device has audio sockets
+[] Audio reset (request_reset_audio property) should make device behave as if no sound ever was sent to it. All audio devices should implement this. Can only be tested for devices that can output audio when the Reason sequencer is stopped: typically synths, reverb, and delay, but not EQ or compressor.
+[] Silent input (<kAvoidZeroOffset) or no MIDI input should generate silent output
+[] As a Missing Device, an effect should bypass audio
+
+Device has sequencer and/or support patterns
+[] Recommended: If the device uses patterns, it should support pattern lane automation.
+[] If pattern lane automation is supported, pattern offset automation should be supported, including adjusting in Inspector.
+[] When in Combi and Run Pattern Devices is switched, the device should start/stop accordingly
+[] If running and Reason Stop is clicked, device should stop Running
+[] If Player: If set to OFF or Bypass All = ON, a player should not generate MIDI or CV of its own.
+[] If Player: Activate Run and then Bypass All => Run should be disabled
+[] If Player: Bypass All and then activate Reason seq Play => Run should not be activated
+[] If Player: Reset Audio should not affect run state
+
+Device supports sample loading
+[] Device should have a sample loading widget. Can be hidden in a panel though (like if Thor had a sample oscillator).
+[] Recommended: If the device supports sample loading, it should have associated sample drop zones. Do the drop zones work as expected?
+
+
+--------------------------
+DSP CHECKLIST
+--------------------------
+
+Use this reduced checklist when there are only DSP changes:
+- no graphics files added/removed (patches are OK)
+- only version number updated in info.lua and versions.txt
+
+REASON VERSIONS - - - - - - - - - - - - - - - - - - - - - - -
+
+[] The device conforms to this checklist in latest Reason Testing
+[] The device starts and has reasonable performance in latest Reason Deployment
+
+GENERAL BEHAVIOR - - - - - - - - - - - - - - - - - - - - - -
+
+[] Does the device work/sound OK in both STOP and PLAY?
+[] Does the device work/sound OK with initial parameter values (after Reset Device)?
+[] Reasonable CPU load - can it be used in a typical song?
+
+DEVICE TYPE SPECIFIC BEHAVIOUR - - - - - - - - - - - - - - - -
+
+Instruments
+[] Does it respect the master tuning in the preferences? Not needed for CV-only instruments.
+[] Does it have a Note On LED on folded and un-folded front panels? 
+[] Does it support CV Gate/Note support polyphonic CV correctly? (test with MIDI through RPG-8).
+
+FX
+[] On/Off/Bypass fader is present on front and folded front panels
+[] When inside Combinator, pressing Bypass All FX should set device to Bypass
+
+Players
+Check that MIDI notes are bypassed (or treated) correctly in the following circumstances:
+- [] If player is a sequencer (or similar self-generating type), it should still bypass incoming MIDI when set to ON
+- [] Player is set to OFF - incoming MIDI should always be bypassed
+- [] Bypass All - player is bypassed by host, but should stop generating MIDI and CV
+[] On/Off should not be saved in the patch. 
+[] When player is set to OFF, notes that it has generated should be killed.
+[] Recommended: When player is set to OFF, Bypass All or null pattern, device should look disabled.
+[] Direct Record should work as expected.
+[] Send To Track should work as expected.
+[] If Player has a Hold button or similar, playback should turn off when receiving Audio Reset (i.e. when exporting)
+
+FEATURE SPECIFIC BEHAVIOUR - - - - - - - - - - - - - - - - - - 
+
+Device has audio sockets
+[] Audio reset (request_reset_audio property) should make device behave as if no sound ever was sent to it. All audio devices should implement this. Can only be tested for devices that can output audio when the Reason sequencer is stopped: typically synths, reverb, and delay, but not EQ or compressor.
+[] Silent input (<kAvoidZeroOffset) or no MIDI input should generate silent output

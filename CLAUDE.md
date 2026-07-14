@@ -17,12 +17,16 @@ Implementation has started with the Blender-independent layers. Repository conte
 - `tests/` — pytest suite with SDK-convention fixtures under `tests/fixtures/`.
 - `blender_manifest.toml` — Blender 4.2 LTS+ extension manifest; `pyproject.toml` is dev
   tooling only (RE-Blend is never pip-installed into Blender).
-- `SDK_v4.6.0/` — a vendored, read-only copy of the Reason Rack Extension (Jukebox) SDK,
-  kept as reference material (only `API/`, `Documentation/`, `Licenses/` — the example devices
-  are *not* vendored). RE-Blend reads/writes the *user's* RE project files; it does not
-  bundle or link this SDK. Do not treat SDK files as something to modify.
-- License is **GPL-3.0-or-later** (`LICENSE`); the vendored SDK stays under Reason Studios'
-  own terms.
+- `SDK_v4.6.0/` — a local, read-only copy of the Reason Rack Extension (Jukebox) SDK,
+  kept on disk as reference material (the example devices are *not* included). RE-Blend
+  reads/writes the *user's* RE project files; it does not bundle or link this SDK. Do not
+  treat SDK files as something to modify. **This directory is git-ignored**: the SDK is
+  Reason Studios' "All rights reserved" material and its license forbids pairing it with
+  copyleft software, so it must not be committed to this GPL-3.0 repo. The only tracked
+  exceptions are `Documentation/acceptance_testing_checklist.txt` (reference material) and
+  `Licenses/RE SDK License Agreement.txt` (kept so the SDK's own terms travel with it).
+- License is **GPL-3.0-or-later** (`LICENSE`); the local SDK copy stays under Reason Studios'
+  own terms and is not redistributed with this repo.
 
 ## Commands
 

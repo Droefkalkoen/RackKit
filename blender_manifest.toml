@@ -1,0 +1,27 @@
+schema_version = "1.0.0"
+
+# RE-Blend — Rack Extension GUI sprite-sheet production from Blender.
+# Design: Blender_RE_Plugin_Design.md (§8: Blender 4.2 LTS+ extension, pure Python).
+
+id = "reblend"
+version = "0.1.0"
+name = "RE-Blend"
+tagline = "Sprite-sheet production for Reason Rack Extension GUIs"
+maintainer = "droefkalkoen <ephexdesign@gmail.com>"
+type = "add-on"
+
+website = "https://github.com/Droefkalkoen/RE-Blend"
+
+tags = ["Render", "Pipeline"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+# The lupa wheel (sandboxed Lua interpreter for reading the RE project's
+# GUI2D/*.lua files, design §6.4) is bundled at packaging time, one wheel per
+# supported platform. numpy ships with Blender and is not bundled.
+# wheels = ["./wheels/lupa-<version>-<platform>.whl"]
+
+[permissions]
+files = "Read and write the linked RE project's GUI2D sprite sheets and layout Lua files"

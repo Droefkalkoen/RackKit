@@ -1,0 +1,27 @@
+# Development tooling only. RE-Blend is not pip-installed into Blender — it is
+# packaged as a Blender extension via blender_manifest.toml. This file exists so
+# the Blender-independent layers (reblend/project/…) can be developed and tested
+# with plain CPython.
+
+[project]
+name = "re-blend"
+version = "0.1.0"
+description = "Blender extension for Reason Rack Extension GUI sprite-sheet production"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.11"
+dependencies = [
+    # Bundled as a wheel in the Blender extension; a plain dependency here.
+    "lupa>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools]
+packages = ["reblend", "reblend.project"]

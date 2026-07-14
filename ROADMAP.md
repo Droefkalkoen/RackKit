@@ -1,4 +1,4 @@
-# RackKit roadmap
+# RE-Blend roadmap
 
 This is the implementation plan for the design in
 [`Blender_RE_Plugin_Design.md`](Blender_RE_Plugin_Design.md). The design doc says *what* and
@@ -8,8 +8,8 @@ design doc wins and this file gets fixed. Section references (§) point into the
 ## Ground rules
 
 Everything here is anchored to a **pilot project** — a real, in-flight Rack Extension whose
-`GUI2D/*.lua` files are already wired, and whose art will be produced entirely through RackKit.
-Exit criteria are phrased against the pilot on purpose: if the pilot needs something RackKit
+`GUI2D/*.lua` files are already wired, and whose art will be produced entirely through RE-Blend.
+Exit criteria are phrased against the pilot on purpose: if the pilot needs something RE-Blend
 can't do, that's a design bug, not a nice-to-have (§11).
 
 Two more rules that shape the ordering:
@@ -18,7 +18,7 @@ Two more rules that shape the ordering:
    thing that could sink the whole approach (§10.1), so it gets proven in M0 against real SDK
    input — RE2DRender is the acceptance test — before anything else gets built on top.
 2. **Nothing writes to a Lua file until round-tripping is proven.** Read-only comes first,
-   patch mode comes with interop fixtures (files RackKit writes must load in RE Edit, §6.4),
+   patch mode comes with interop fixtures (files RE-Blend writes must load in RE Edit, §6.4),
    and the fancier layout-editing features stay parked until that's solid (§10.5). Corrupting
    someone's hand-commented config file once is one time too many.
 
@@ -82,7 +82,7 @@ confirms the move, and RE Edit still loads the patched files without complaint.
 - **Emission-pass export** (§5.6) for the post-composite pipeline.
 
 **Done when:** the pilot project's art build runs headless on its build machine, and its docs
-can point at RackKit as *the* art pipeline.
+can point at RE-Blend as *the* art pipeline.
 
 ## M4 — Library & layout editing
 
@@ -108,9 +108,9 @@ much I'd want them:
 - **Render-manifest diffing in CI**: compare the manifest against the last committed one and
   fail (or comment on the PR) when a sheet changed that shouldn't have. The manifest exists
   from M3; this is a small script on top that turns it into an art-regression gate.
-- **The missing GUI authoring manual.** Every undocumented SDK behaviour RackKit verifies
+- **The missing GUI authoring manual.** Every undocumented SDK behaviour RE-Blend verifies
   empirically (§10.4 — `sequence_fader` art semantics being the poster child) gets captured in
-  RackKit's docs anyway. Curating that into a standalone reference would be worth more to the
+  RE-Blend's docs anyway. Curating that into a standalone reference would be worth more to the
   RE community than most features on this list.
 - **Watch mode**: re-render dirty elements automatically on scene save. Dirty tracking exists
   from M3; this is a timer and a toggle.

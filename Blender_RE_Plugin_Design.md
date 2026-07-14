@@ -1,8 +1,8 @@
-# RackKit — Blender Add-on for Rack Extension GUI Asset Production
+# RE-Blend — Blender Add-on for Rack Extension GUI Asset Production
 
 **Design document · v0.2 draft**
-Working name: **RackKit** (placeholder — decide before the repo is created; alternatives:
-`re-blend`, `re-atelier`, `blender-re-tools`).
+Name: **RE-Blend** — *RE* for Rack Extension, *Blend* for Blender and its `.blend` files. Python
+package/import name `reblend`; distribution/repo name `re-blend`.
 
 > **Status & home:** this document describes a **general-purpose, standalone Blender
 > add-on** that will live in its own repository. No code exists yet — this is the design
@@ -38,7 +38,7 @@ strip stacking in an image editor, and no check that any of it matches what the 
 files declare. Every mismatch fails silently and is only discovered after an RE2DRender
 run — or worse, in Reason as a wobbling knob.
 
-**RackKit's job:** make the Blender scene the single source of truth for the *rendered
+**RE-Blend's job:** make the Blender scene the single source of truth for the *rendered
 look* of every element, bind control states (knob rotation, indicator lighting, button
 presses, fader detents) to Blender's timeline frames, and automate everything between
 "scene" and "correct sprite sheets in `GUI2D/`" — including two-way synchronisation with
@@ -46,34 +46,34 @@ the RE project's Lua configuration so sizes, offsets, and frame counts can never
 
 ## 2. Position in the RE tooling ecosystem
 
-RackKit fills a gap; it deliberately does **not** replace existing tools:
+RE-Blend fills a gap; it deliberately does **not** replace existing tools:
 
-| Tool | Role | RackKit's relationship |
+| Tool | Role | RE-Blend's relationship |
 | --- | --- | --- |
-| **RE2DRender** (SDK) | Compiles `GUI2D/` (lua + PNGs) into the build format; generates the 0.5× set | RackKit **produces its input** (the PNGs) and never generates low-res assets |
-| **RE2DPreview** (SDK) | Renders panels to images for a quick look | RackKit can shell out to it after export (optional convenience) |
-| **RE Edit** (pongasoft, open source) | WYSIWYG editor for `hdgui_2D.lua` / `device_2D.lua` — placement and widget editing with existing PNGs | Overlapping by design where it helps: RE Edit edits the *layout files* against finished PNGs, RackKit produces the *art* and edits the same layout data from the Blender side. Feature overlap is acceptable whenever doing it inside Blender is genuinely better (see §6.5); the hard requirement is interoperability — both tools read/write the same two files (see §6.4) |
+| **RE2DRender** (SDK) | Compiles `GUI2D/` (lua + PNGs) into the build format; generates the 0.5× set | RE-Blend **produces its input** (the PNGs) and never generates low-res assets |
+| **RE2DPreview** (SDK) | Renders panels to images for a quick look | RE-Blend can shell out to it after export (optional convenience) |
+| **RE Edit** (pongasoft, open source) | WYSIWYG editor for `hdgui_2D.lua` / `device_2D.lua` — placement and widget editing with existing PNGs | Overlapping by design where it helps: RE Edit edits the *layout files* against finished PNGs, RE-Blend produces the *art* and edits the same layout data from the Blender side. Feature overlap is acceptable whenever doing it inside Blender is genuinely better (see §6.5); the hard requirement is interoperability — both tools read/write the same two files (see §6.4) |
 | **Recon / Reason** | Validation host / DAW | Downstream, untouched |
-| **Photoshop / Krita / etc.** | Compositing, engraved labels, state glows | Reduced but not eliminated (see §5.6): RackKit supports both a "Blender-only" path and a "Blender → 2D tool" path |
+| **Photoshop / Krita / etc.** | Compositing, engraved labels, state glows | Reduced but not eliminated (see §5.6): RE-Blend supports both a "Blender-only" path and a "Blender → 2D tool" path |
 
 The three-file contract of an RE (a `motherboard_def.lua` property → bound by an
 `hdgui_2D.lua` widget → naming a node placed in `device_2D.lua` → naming a PNG) stays the
-RE project's own responsibility; RackKit reads it, validates against it, and can write
+RE project's own responsibility; RE-Blend reads it, validates against it, and can write
 the placement layer of it.
 
 ## 3. Users and core scenarios
 
-1. **Greenfield device**: designer starts from RackKit's template scene (calibrated
+1. **Greenfield device**: designer starts from RE-Blend's template scene (calibrated
    camera, lighting rig, panel plane at the right size), lays out parametric controls
    from the built-in library, and *exports* a first-pass `device_2D.lua` +
    `hdgui_2D.lua` skeleton plus all sprite sheets.
 2. **Existing project**: a repo already has `device_2D.lua` / `hdgui_2D.lua` fully wired
    with placeholder offsets and final frame counts. Designer *imports* the project:
-   RackKit builds a guide layout in Blender (panel plane, per-control bounding boxes at
+   RE-Blend builds a guide layout in Blender (panel plane, per-control bounding boxes at
    the declared offsets/sizes, rigs pre-configured with the declared frame counts).
    Designer models/materials the hardware inside those boxes and hits "Render All" —
    correct sheets land in `GUI2D/`.
-3. **Iteration**: designer nudges a knob's look or moves a control; RackKit re-renders
+3. **Iteration**: designer nudges a knob's look or moves a control; RE-Blend re-renders
    only the dirty elements and (if the control moved) updates its `offset` in
    `device_2D.lua`. Designer re-runs RE2DRender/Preview to see it in context.
 4. **CI / build machine**: the `.blend` is rendered headlessly (`blender -b`) so the
@@ -83,8 +83,8 @@ the placement layer of it.
 
 ### 4.1 Project link
 
-A scene is linked to exactly one RE project by pointing RackKit at the repo root. From
-there RackKit locates and parses:
+A scene is linked to exactly one RE project by pointing RE-Blend at the repo root. From
+there RE-Blend locates and parses:
 
 - `GUI2D/device_2D.lua` — nodes, offsets, sprite paths, frame counts, per panel
   (`front`, `folded_front`, `back`, `folded_back`), plus `CableOrigin`.
@@ -101,7 +101,7 @@ Parsed data is cached on the scene; a **Sync** operator re-reads and reports dri
 ### 4.2 The RE Element (the central object)
 
 Every exported sprite sheet corresponds to one **RE Element**: a Blender **collection**
-carrying RackKit custom properties:
+carrying RE-Blend custom properties:
 
 | Property | Meaning |
 | --- | --- |
@@ -126,10 +126,10 @@ one collection referenced from both.
 
 ### 4.3 Frame binding: the timeline **is** the sprite sheet
 
-The designer binds control state to scene frames — RackKit's central idea, matching how
+The designer binds control state to scene frames — RE-Blend's central idea, matching how
 the designer already thinks ("frame 0 = knob at minimum"):
 
-- **Knobs** (`re_kind = knob`): RackKit auto-creates a rotation driver on the knob's
+- **Knobs** (`re_kind = knob`): RE-Blend auto-creates a rotation driver on the knob's
   rotating part: scene frame 0 → min angle, frame `re_frames − 1` → max angle, linear,
   around the registration empty's axis. Default sweep −150°…+150° (300°), configurable
   per element. Changing `re_frames` re-generates the driver — frame count can never
@@ -141,7 +141,7 @@ the designer already thinks ("frame 0 = knob at minimum"):
   3-state On/Off/Bypass fader (3 frames, following the SDK examples' use of the built-in
   `builtin_onoffbypass` property with a `jbox.sequence_fader`): frame 0 = *Off* (handle
   down, lamp dark), frame 1 = *On* (handle mid, lamp lit), frame 2 = *Bypass* (handle
-  up, alternate lamp colour). RackKit compiles the state table into keyframes with
+  up, alternate lamp colour). RE-Blend compiles the state table into keyframes with
   **constant** interpolation so scrubbing the timeline previews exactly the discrete
   sheet.
 - **Lamps / LEDs**: a two-state specialisation (unlit/lit) driving emission — the
@@ -155,7 +155,7 @@ timeline, and rendering a sheet is just rendering frames `0…N−1`.
 ### 4.4 World calibration
 
 One scene-level convention makes everything else automatic: a fixed **world-to-pixel
-scale** (default 1 Blender unit = 100 panel px; configurable once per scene). RackKit
+scale** (default 1 Blender unit = 100 panel px; configurable once per scene). RE-Blend
 provides:
 
 - A **Calibrate** operator that creates/repairs the panel reference: an orthographic
@@ -194,11 +194,11 @@ an engraved/recessed representation that is part of the panel itself).
   `frameH × frameCount`, order always top-down.
 - **Alpha:** exporter enforces straight alpha and verifies the written PNG (Blender's
   internal compositing is premultiplied; the export path must guarantee unassociated
-  alpha in the file and RackKit validates the result rather than trusting settings).
+  alpha in the file and RE-Blend validates the result rather than trusting settings).
 - **Bit depth / colour:** 8-bit PNG enforced; scene colour management pinned to
   **Standard** view transform (not Filmic/AgX) so palette hex values survive to the file
   — with a scene check that warns when the view transform has been changed.
-- **Overflow detection:** after rendering, RackKit scans each frame's alpha for non-zero
+- **Overflow detection:** after rendering, RE-Blend scans each frame's alpha for non-zero
   pixels touching the frame border — geometry, shadow, or glow bleeding outside the
   declared bounding box (which would clip in the sheet or misregister in Reason) is
   reported per frame.
@@ -237,21 +237,21 @@ iteration is the whole game.
 ### 5.6 Emission separation (the 2D-compositing question)
 
 Many RE art pipelines keep state glows out of the 3D render — accent lighting is added
-per state in a 2D tool so it can be tuned without re-rendering. RackKit supports
+per state in a 2D tool so it can be tuned without re-rendering. RE-Blend supports
 **both** pipelines and lets the project choose per element:
 
 - **Blender-complete** (default for new projects): state glows are Blender emission
   materials driven by the state table (§4.3); the sheet leaving Blender is final. This
   makes the 2D compositing step optional for controls.
-- **Post-composite**: RackKit renders *two* aligned strips per element — base (emission
+- **Post-composite**: RE-Blend renders *two* aligned strips per element — base (emission
   disabled) and an **emission-only pass** (everything else black/transparent, via a
   second view layer) — so a compositing app can add/tune glows non-destructively. The
   emission strip is a working file (written to the project's design-sources area, not
   `GUI2D/`).
 
 Engraved label text remains out of scope for v1 (panel typography is better set in a 2D
-tool), but backdrops can be round-tripped: RackKit renders the raw panel, the 2D tool
-adds engraving, and the flattened result returns to `GUI2D/` untouched by RackKit —
+tool), but backdrops can be round-tripped: RE-Blend renders the raw panel, the 2D tool
+adds engraving, and the flattened result returns to `GUI2D/` untouched by RE-Blend —
 validation only checks its dimensions.
 
 ### 5.7 Palette and material kit
@@ -296,17 +296,17 @@ offsets/frames/sizes are listed with per-item *accept theirs / keep mine* resolu
 
 Two modes, chosen per project:
 
-- **Patch mode** (default for existing projects): RackKit updates only the fields it
+- **Patch mode** (default for existing projects): RE-Blend updates only the fields it
   owns — `offset = { x, y }` and `frames = N` values of nodes it knows — leaving all
   other content, comments, and formatting untouched. Implemented as anchored structural
   edits, not a reserialisation of the whole file (hand-maintained comments in these
   files are often load-bearing documentation).
-- **Generate mode** (greenfield): RackKit emits complete `device_2D.lua` and a skeleton
+- **Generate mode** (greenfield): RE-Blend emits complete `device_2D.lua` and a skeleton
   `hdgui_2D.lua` (widget stubs with `graphics.node` filled and `value = "/custom_properties/TODO"`
   placeholders) from the scene, formatted to match SDK-example conventions.
 
 Export never touches `motherboard_def.lua` — properties are the developer's contract;
-RackKit only reads it for validation.
+RE-Blend only reads it for validation.
 
 ### 6.5 Optional layout editing (deliberate RE Edit overlap)
 
@@ -326,17 +326,17 @@ skipped where it doesn't:
   library can append the corresponding `device_2D.lua` node *and* an `hdgui_2D.lua`
   widget stub (extending generate mode's skeleton emission to incremental edits), so a
   new knob doesn't require a round-trip through a text editor or RE Edit.
-- **Widget property panel**: editing the fields RackKit understands (node/graphics
+- **Widget property panel**: editing the fields RE-Blend understands (node/graphics
   binding, `frames`, `handle_size`, `display_width/height_pixels`, bound property path
   chosen from the parsed `motherboard_def.lua` list) directly on the RE Element, written
   back through the same anchored-edit machinery.
 
-**Not worth overlapping (still out of scope):** widget types or attributes RackKit has
+**Not worth overlapping (still out of scope):** widget types or attributes RE-Blend has
 no visual representation for, device-flavour variations, and anything requiring
 emulation of Reason's runtime widget behaviour — for those, RE Edit or a text editor
-remains the right tool. When RackKit encounters widget attributes it doesn't model, it
+remains the right tool. When RE-Blend encounters widget attributes it doesn't model, it
 preserves them byte-for-byte on write (the patch-mode guarantee), so mixed workflows —
-RackKit for art and placement, RE Edit for fine widget tuning — stay safe in both
+RE-Blend for art and placement, RE Edit for fine widget tuning — stay safe in both
 directions.
 
 ### 6.3 Validation report
@@ -368,14 +368,14 @@ constructors and a `format_version`). Options considered:
 
 1. **Embedded Lua interpreter** (bundle the `lupa` wheel; Blender 4.2+ extensions can
    ship wheels): execute the files in a sandbox with a stub `jbox` table that records
-   constructor calls. Highest fidelity for *reading* — anything the SDK accepts, RackKit
+   constructor calls. Highest fidelity for *reading* — anything the SDK accepts, RE-Blend
    reads, including files RE Edit wrote.
 2. Pure-Python tolerant parser: no binary dependency, but a second grammar to maintain
    and a fidelity risk.
 
 **Decision: option 1 for reading; patch-mode structural edits (not reserialisation) for
-writing** (§6.2). Interop rule: RackKit must correctly read files written by RE Edit and
-the SDK examples, and files RackKit writes must load in RE Edit — this is a test-suite
+writing** (§6.2). Interop rule: RE-Blend must correctly read files written by RE Edit and
+the SDK examples, and files RE-Blend writes must load in RE Edit — this is a test-suite
 fixture requirement, with the SDK's example devices (e.g. the stereo-FX
 `SilenceDetectionEffect`) plus at least one real-world project as fixtures.
 
@@ -384,7 +384,7 @@ fixture requirement, with the SDK's example devices (e.g. the stereo-FX
 Everything the UI does must be drivable via operators with no UI state, so:
 
 ```
-blender -b MyDevice.blend --python-expr "import rackkit; rackkit.cli()" -- \
+blender -b MyDevice.blend --python-expr "import reblend; reblend.cli()" -- \
     render --all --project /path/to/mydevice --strict
 ```
 
@@ -403,7 +403,7 @@ opaque binary drop.
 
 - **Platform:** Blender **4.2 LTS+**, shipped as a Blender **extension**
   (`blender_manifest.toml`), which permits bundling Python wheels (`lupa`; `numpy` ships
-  with Blender). Pure Python; no compiled RackKit code.
+  with Blender). Pure Python; no compiled RE-Blend code.
 - **Modules:**
   - `project/` — project link, Lua read (sandboxed interpreter + `jbox` stubs), Lua
     patch-writer, palette loader, manifest.
@@ -416,10 +416,10 @@ opaque binary drop.
   - `ui/` — N-panel tab ("RE"), element list with status badges (synced / dirty /
     missing / error), validation report, state playground.
   - `cli.py` — headless entry points (§7).
-- **No SDK code or assets are bundled.** RackKit points at tool *paths* the user
+- **No SDK code or assets are bundled.** RE-Blend points at tool *paths* the user
   configures per machine (RE2DRender/RE2DPreview launch is optional convenience). This
-  keeps RackKit cleanly outside the RE SDK licence: it only reads/writes the user's own
-  project files. RackKit is open source under **GPL-3.0-or-later** (see `LICENSE`) —
+  keeps RE-Blend cleanly outside the RE SDK licence: it only reads/writes the user's own
+  project files. RE-Blend is open source under **GPL-3.0-or-later** (see `LICENSE`) —
   add-ons that import `bpy` are conventionally GPL, and this settles the question that
   earlier drafts left open.
 - **Scene data versioning:** every `re_*` schema carries a version int; migrations run
@@ -430,9 +430,9 @@ opaque binary drop.
 - Generating the 0.5× asset set (RE2DRender's job).
 - Editing `motherboard_def.lua`, `realtime_controller.lua`, `display.lua`, or any C++.
 - Rendering custom-display *content* (meters etc. are drawn live by the device's
-  display code; RackKit only renders their housings and marks their cut-outs).
+  display code; RE-Blend only renders their housings and marks their cut-outs).
 - Panel typography/engraving authoring (import-friendly, not authored in v1; see §5.6).
-- Widget attributes RackKit has no visual model for (preserved byte-for-byte on write;
+- Widget attributes RE-Blend has no visual model for (preserved byte-for-byte on write;
   edited in RE Edit or a text editor — see §6.5 for where overlap *is* planned).
 - Building `.u45` packages or driving Recon.
 
@@ -456,10 +456,10 @@ opaque binary drop.
    truth is what RE2DRender accepts and what the example devices do. Concretely open:
    the exact art semantics of `sequence_fader` — stepped faders can be authored either
    as a 1-frame handle the SDK moves along a track (`handle_size` > 0), or as an N-frame
-   sheet with the handle position baked per frame (`handle_size = 0`). RackKit must
+   sheet with the handle position baked per frame (`handle_size = 0`). RE-Blend must
    support both patterns; the state-table rig covers the N-frame case, a plain static
-   element covers the moving handle. Every such behaviour RackKit relies on must be
-   verified empirically against RE2DRender/Recon early and captured in RackKit's own
+   element covers the moving handle. Every such behaviour RE-Blend relies on must be
+   verified empirically against RE2DRender/Recon early and captured in RE-Blend's own
    docs — which then become the written-down reference the SDK lacks.
 5. **RE Edit overlap without RE Edit's maturity.** Overlap is deliberate (§6.5), but a
    half-working in-Blender widget editor is worse than none: it must never write
@@ -474,34 +474,34 @@ opaque binary drop.
 
 Development is anchored to a **pilot project**: a real, in-flight Rack Extension whose
 `GUI2D/*.lua` files are already wired and whose art is produced entirely through
-RackKit. Milestone exit criteria are phrased against it on purpose — anything the pilot
-project's pipeline needs that RackKit can't do is a design bug in this document.
+RE-Blend. Milestone exit criteria are phrased against it on purpose — anything the pilot
+project's pipeline needs that RE-Blend can't do is a design bug in this document.
 
 | Milestone | Contents | Exit criterion |
 | --- | --- | --- |
 | **M0 — Spike** | Calibration, one hand-tagged knob element, turntable driver, strip render + stitch, straight-alpha verification | A 61-frame knob strip rendered from the pilot project's `.blend` that RE2DRender accepts and that turns smoothly in RE2DPreview |
 | **M1 — MVP** | Project import (read-only), RE Element schema + rigs for all kinds, batch render, validation report | The pilot project's complete phase-1 sheet list rendered from one `.blend`, zero validation errors |
 | **M2 — Sync** | Patch-mode export, re-import merge, panel compositor preview, flipbook/contact sheet, SDK tool launch | Move a control in Blender → `device_2D.lua` offset updates → RE2DPreview confirms; RE Edit still loads the patched files |
-| **M3 — Production** | Headless CLI + manifest, dirty-only rendering, palette/material/lighting kits, emission-pass export | The pilot project's art build runs headless on its build machine; its docs can point at RackKit as *the* art pipeline |
+| **M3 — Production** | Headless CLI + manifest, dirty-only rendering, palette/material/lighting kits, emission-pass export | The pilot project's art build runs headless on its build machine; its docs can point at RE-Blend as *the* art pipeline |
 | **M4 — Library & layout editing** | Parametric control library (asset browser), generate-mode config export, in-viewport placement editing + widget add/remove/property panel (§6.5), greenfield template, docs | A new blank RE gets from empty scene to previewable panel without hand-editing Lua or leaving Blender |
 
 ## 12. Reference material
 
 There is **no formal GUI authoring manual in the RE SDK** — its written documentation
 amounts to an acceptance testing checklist plus licence texts. The authoritative
-references for RackKit's constraints are therefore:
+references for RE-Blend's constraints are therefore:
 
 - **The SDK's example devices** (`SDK/Examples/`) — the de-facto specification for
   `device_2D.lua` / `hdgui_2D.lua` file shape, widget usage, frame conventions, and
   stock parts (e.g. `SharedAudioJack`); the stereo-FX `SilenceDetectionEffect` is a good
   canonical fixture.
 - **The SDK tools' observed behaviour** — what RE2DRender accepts/rejects and what
-  RE2DPreview/Recon display is the ground truth; RackKit's test suite must encode these
+  RE2DPreview/Recon display is the ground truth; RE-Blend's test suite must encode these
   findings (see risk §10.4).
 - **`SDK/Documentation/acceptance_testing_checklist.txt`** — the checklist Recon
   validates against (e.g. the On/Off/Bypass control appearing on the folded front).
 - **`SDK/API/Jukebox.h` / `JukeboxTypes.h`** — the API source of truth for anything
-  touching the native side (RackKit itself stays out of it).
+  touching the native side (RE-Blend itself stays out of it).
 - **pongasoft's open-source RE tooling** — [RE Edit](https://github.com/pongasoft/re-edit)
   (the interop peer for `device_2D.lua` / `hdgui_2D.lua`, and prior art for parsing them
   via re-mock), re-mock, and re-cmake.

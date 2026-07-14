@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# Blender extension build output
+/dist/
+*.zip
+
+# Blender backup files
+*.blend1
+*.blend2

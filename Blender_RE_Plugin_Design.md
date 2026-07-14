@@ -419,9 +419,9 @@ opaque binary drop.
 - **No SDK code or assets are bundled.** RackKit points at tool *paths* the user
   configures per machine (RE2DRender/RE2DPreview launch is optional convenience). This
   keeps RackKit cleanly outside the RE SDK licence: it only reads/writes the user's own
-  project files. RackKit itself should be open source (Apache-2.0 or GPL-compatible with
-  Blender's Python API usage — resolve before publishing; add-ons that import `bpy` are
-  conventionally GPL).
+  project files. RackKit is open source under **GPL-3.0-or-later** (see `LICENSE`) —
+  add-ons that import `bpy` are conventionally GPL, and this settles the question that
+  earlier drafts left open.
 - **Scene data versioning:** every `re_*` schema carries a version int; migrations run
   on file load, since `.blend` files outlive add-on versions.
 

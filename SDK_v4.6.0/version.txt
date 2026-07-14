@@ -1,2 +1,0 @@
-JukeboxSDK_460_258
-TargetVersion=3.0

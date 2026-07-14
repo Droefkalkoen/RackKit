@@ -15,3 +15,12 @@ __pycache__/
 # Blender backup files
 *.blend1
 *.blend2
+
+# Vendored RE SDK (Reason Studios, "All rights reserved") — not redistributable
+# under GPL-3.0, and the SDK license forbids pairing it with copyleft software.
+# Kept locally for reference only; nothing here ships in the extension.
+# Exception: the acceptance testing checklist is retained as reference material.
+/SDK_v4.6.0/*
+!/SDK_v4.6.0/Documentation/
+/SDK_v4.6.0/Documentation/*
+!/SDK_v4.6.0/Documentation/acceptance_testing_checklist.txt

@@ -169,6 +169,11 @@ class Node2D:
     offset: tuple[float, float] | None = None
     graphics: list[Graphic] = field(default_factory=list)
     children: dict[str, "Node2D"] = field(default_factory=dict)
+    #: True for the unnamed sub-tables the SDK convention uses to group a
+    #: panel's widget nodes (see :func:`_parse_device_panel`). Such a group
+    #: carries no graphics and a synthesized name; it exists only so its
+    #: children are reached by the offset-folding walk and by name lookup.
+    anonymous: bool = False
 
     @property
     def frames(self) -> int:
@@ -213,14 +218,48 @@ def read_device_2d(path: Path | str) -> Device2D:
             continue
         if not isinstance(table, dict):
             raise LuaConfigError(path, f"panel '{panel}' is not a table")
-        panels[panel] = {
-            name: _parse_node(path, panel, name, value)
-            for name, value in table.items()
-        }
+        panels[panel] = _parse_device_panel(path, panel, table)
     return Device2D(format_version=format_version, panels=panels, source_path=path)
 
 
-def _parse_node(path: Path, panel: str, name: Any, value: Any) -> Node2D:
+def _parse_device_panel(path: Path, panel: str, table: dict[Any, Any]) -> dict[str, Node2D]:
+    """Parse one panel table into its named nodes.
+
+    A panel is *not* a flat map of named nodes. The SDK / RE Edit convention —
+    seen in every example device — puts the backdrop and any point nodes (e.g.
+    ``CableOrigin``) as *named* entries at the top level, then collects the
+    widget nodes inside one or more *unnamed* sub-tables::
+
+        front = {
+          Panel_Front = {{ path = "Panel_Front" }},   -- named backdrop
+          {                                            -- unnamed widget group
+            knob_tone = { offset = {...}, { path = "knob_tone", frames = 61 } },
+            ...
+          },
+        }
+
+    An unnamed sub-table arrives here as an *integer* key (Lua array index).
+    Each is modelled as a nameless group :class:`Node2D` so its named children
+    are reached by the offset-folding walk (:mod:`reblend.project.link`) and by
+    :meth:`Device2D.node`, exactly like a named nested group. ``hdgui_2D.lua``
+    references every node by name regardless of nesting depth, so the grouping
+    is transparent to everything downstream.
+    """
+    nodes: dict[str, Node2D] = {}
+    for key, value in table.items():
+        if isinstance(key, str):
+            nodes[key] = _parse_node(path, panel, key, value)
+        elif isinstance(key, int):
+            group_name = f"{panel}:group{key}"
+            nodes[group_name] = _parse_node(path, panel, group_name, value, anonymous=True)
+        else:
+            raise LuaConfigError(path, f"panel '{panel}': unexpected key {key!r}")
+    return nodes
+
+
+def _parse_node(
+    path: Path, panel: str, name: Any, value: Any, *, anonymous: bool = False
+) -> Node2D:
     where = f"panel '{panel}', node '{name}'"
     if not isinstance(name, str):
         raise LuaConfigError(path, f"{where}: node names must be strings")
@@ -230,19 +269,28 @@ def _parse_node(path: Path, panel: str, name: Any, value: Any) -> Node2D:
     if not isinstance(value, dict):
         raise LuaConfigError(path, f"{where}: expected a table, got {type(value).__name__}")
 
-    node = Node2D(name=name)
+    node = Node2D(name=name, anonymous=anonymous)
     for key, entry in value.items():
         if key == "offset":
             if not (isinstance(entry, list) and len(entry) == 2):
                 raise LuaConfigError(path, f"{where}: offset must be {{x, y}}")
             node.offset = (entry[0], entry[1])
         elif isinstance(key, int):
-            if not isinstance(entry, dict) or "path" not in entry:
+            if isinstance(entry, dict) and "path" in entry:
+                frames = entry.get("frames", 1)
+                if not isinstance(frames, (int, float)) or int(frames) < 1:
+                    raise LuaConfigError(path, f"{where}: invalid frames value {frames!r}")
+                node.graphics.append(Graphic(path=entry["path"], frames=int(frames)))
+            elif isinstance(entry, dict):
+                # An unnamed nested group (integer-keyed sub-table of named
+                # nodes) rather than a graphic — same transparent grouping the
+                # panel level uses, but nested inside a node.
+                child_name = f"{name}:group{key}"
+                node.children[child_name] = _parse_node(
+                    path, panel, child_name, entry, anonymous=True
+                )
+            else:
                 raise LuaConfigError(path, f"{where}: graphics entry {key} has no path")
-            frames = entry.get("frames", 1)
-            if not isinstance(frames, (int, float)) or int(frames) < 1:
-                raise LuaConfigError(path, f"{where}: invalid frames value {frames!r}")
-            node.graphics.append(Graphic(path=entry["path"], frames=int(frames)))
         elif isinstance(key, str):
             node.children[key] = _parse_node(path, panel, key, entry)
         else:

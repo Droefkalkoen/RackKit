@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import bpy
 
-from ..model import schema
+from ..model import kinds, schema, state_tables
 
 _SEVERITY_ICONS = {"error": "CANCEL", "warning": "ERROR"}  # ERROR = the ⚠ icon
 _KIND_ICONS = {
@@ -24,11 +24,20 @@ _KIND_ICONS = {
 }
 
 
+def _active_element(context):
+    """The active collection if it is an RE Element, else ``None``."""
+    active = context.collection
+    if active is not None and schema.is_element(active):
+        return active
+    return None
+
+
 class REBLEND_PT_project(bpy.types.Panel):
     bl_label = "RE Project"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "RE"
+    bl_order = 0
 
     def draw(self, context):
         layout = self.layout
@@ -41,6 +50,7 @@ class REBLEND_PT_project(bpy.types.Panel):
 
         layout.separator()
         layout.operator("reblend.validate", icon="CHECKMARK")
+        layout.prop(settings, "inactive_render")
         col = layout.column(align=True)
         col.operator("reblend.render_elements", text="Render All",
                      icon="RENDER_ANIMATION").scope = "ALL"
@@ -48,11 +58,123 @@ class REBLEND_PT_project(bpy.types.Panel):
                      icon="RENDER_STILL").scope = "ACTIVE"
 
 
-class REBLEND_PT_elements(bpy.types.Panel):
-    bl_label = "RE Elements"
+class REBLEND_PT_active(bpy.types.Panel):
+    """The active element on its own, above the full list, so it stays in view
+    and collapses independently of the (potentially long) element list."""
+
+    bl_label = "Active Element"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "RE"
+    bl_order = 1
+
+    def draw(self, context):
+        layout = self.layout
+        active = _active_element(context)
+        if active is None:
+            layout.label(text="Select an RE Element collection", icon="INFO")
+            return
+
+        data = schema.props_to_data(active)
+        layout.label(text=data.path or active.name,
+                     icon=_KIND_ICONS.get(data.kind, "OUTLINER_COLLECTION"))
+        layout.label(text=f"{data.kind} · node '{data.node}' · "
+                          f"{data.frame_w}x{data.frame_h}px · {data.frames}f")
+        row = layout.row(align=True)
+        row.prop(active, '["re_frame_w"]', text="Frame W")
+        row.prop(active, '["re_frame_h"]', text="Frame H")
+        layout.operator("reblend.generate_rig", icon="DRIVER")
+
+
+class REBLEND_PT_state_table(bpy.types.Panel):
+    """State playground (§5.3): build each state's actions without leaving the
+    N-panel, so a named-but-empty default table can be filled in by hand."""
+
+    bl_label = "State Table"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "RE"
+    bl_parent_id = "REBLEND_PT_active"
+    bl_order = 0
+
+    @classmethod
+    def poll(cls, context):
+        active = _active_element(context)
+        if active is None:
+            return False
+        data = schema.props_to_data(active)
+        return kinds.rig_for_kind(data.kind) == kinds.RIG_STATES
+
+    def draw(self, context):
+        layout = self.layout
+        active = _active_element(context)
+        data = schema.props_to_data(active)
+        raw = str(active.get("re_states", ""))
+        try:
+            table = (state_tables.StateTable.from_json(raw) if raw
+                     else state_tables.default_state_table(data.kind, data.frames)
+                     or state_tables.StateTable())
+        except ValueError:
+            layout.label(text="re_states JSON is corrupt", icon="ERROR")
+            return
+
+        layout.operator("reblend.add_state_action", icon="ADD")
+        if table.frames != data.frames:
+            layout.label(
+                text=f"{table.frames} states vs re_frames {data.frames}",
+                icon="ERROR")
+
+        controls = table.controls()
+        if not controls:
+            layout.label(text="No actions yet — add one above", icon="INFO")
+            return
+
+        box = layout.box()
+        box.label(text="Actions", icon="ANIM")
+        for index, channels in enumerate(controls):
+            row = box.row(align=True)
+            row.label(text=state_tables.describe_channel(channels[0]))
+            row.operator("reblend.remove_state_action",
+                         text="", icon="X").control = index
+
+        for state_index, state in enumerate(table.states):
+            sbox = layout.box()
+            sbox.label(text=f"{state_index}: {state.name}", icon="KEYFRAME")
+            for index, channels in enumerate(controls):
+                channel = channels[0]
+                row = sbox.row(align=True)
+                row.label(text=_short_channel(channel))
+                row.label(text=_format_value(channel,
+                                             table.value_in(state_index, channel)))
+                op = row.operator("reblend.set_state_value",
+                                  text="", icon="GREASEPENCIL")
+                op.state = state_index
+                op.control = index
+
+
+def _short_channel(channel) -> str:
+    """The channel's target/kind without repeating the target on every row."""
+    return state_tables.describe_channel(channel).split(":", 1)[-1].strip()
+
+
+def _format_value(channel, value) -> str:
+    """A compact, readable rendering of a channel's stored value."""
+    if value is None:
+        return "—"
+    data_path = channel[2]
+    if data_path in ("hide_render", "hide_viewport"):
+        return "hidden" if value else "visible"
+    if isinstance(value, (tuple, list)):
+        return ", ".join(f"{component:.2f}" for component in value)
+    return f"{float(value):.3f}"
+
+
+class REBLEND_PT_elements(bpy.types.Panel):
+    bl_label = "All RE Elements"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "RE"
+    bl_order = 2
 
     def draw(self, context):
         layout = self.layout
@@ -65,12 +187,15 @@ class REBLEND_PT_elements(bpy.types.Panel):
         unsized = sum(
             1 for c in elements if not schema.props_to_data(c).has_frame_size
         )
+        active = _active_element(context)
         for collection in sorted(elements, key=lambda c: c.name):
             data = schema.props_to_data(collection)
             row = layout.row(align=True)
             row.label(text=data.path or collection.name,
                       icon=_KIND_ICONS.get(data.kind, "QUESTION"))
             row.label(text=f"{data.kind} · {data.frames}f")
+            if collection is active:
+                row.label(text="", icon="LAYER_ACTIVE")
             if not data.has_frame_size:
                 row.label(text="", icon="ERROR")
 
@@ -88,23 +213,13 @@ class REBLEND_PT_elements(bpy.types.Panel):
                          text="Set All Missing Sizes",
                          icon="FULLSCREEN_ENTER").scope = "MISSING"
 
-        active = context.collection
-        if active is not None and schema.is_element(active):
-            box = layout.box()
-            data = schema.props_to_data(active)
-            box.label(text=f"Active: {data.path}", icon="OUTLINER_COLLECTION")
-            box.label(text=f"node '{data.node}' · {data.frame_w}x{data.frame_h}px")
-            row = box.row(align=True)
-            row.prop(active, '["re_frame_w"]', text="Frame W")
-            row.prop(active, '["re_frame_h"]', text="Frame H")
-            box.operator("reblend.generate_rig", icon="DRIVER")
-
 
 class REBLEND_PT_validation(bpy.types.Panel):
     bl_label = "Validation Report"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "RE"
+    bl_order = 3
 
     def draw(self, context):
         layout = self.layout
@@ -179,4 +294,10 @@ def _wrap(text: str, width: int = 55) -> list[str]:
     return lines
 
 
-CLASSES = (REBLEND_PT_project, REBLEND_PT_elements, REBLEND_PT_validation)
+CLASSES = (
+    REBLEND_PT_project,
+    REBLEND_PT_active,
+    REBLEND_PT_state_table,
+    REBLEND_PT_elements,
+    REBLEND_PT_validation,
+)

@@ -311,7 +311,8 @@ class REBLEND_OT_render_elements(bpy.types.Operator):
 
         settings = _settings(context)
         results = renderer.render_elements(
-            context.scene, collections, out_dir, ppb=settings.ppb
+            context.scene, collections, out_dir, ppb=settings.ppb,
+            inactive_render=settings.inactive_render,
         )
         findings = [f for result in results for f in result.findings]
         props.store_report(settings, findings)
@@ -411,10 +412,262 @@ class REBLEND_OT_generate_rig(bpy.types.Operator):
         return tuple(axis.normalized())
 
 
+# ---------------------------------------------------------------------------
+# state-table editing (the "state playground", §5.3)
+# ---------------------------------------------------------------------------
+#
+# The persisted source of truth stays the ``re_states`` JSON string; these
+# operators load it, mutate it through the pure StateTable helpers (which keep
+# it total by construction), and write it back. No parallel live model, so the
+# same edits are reproducible headlessly.
+
+
+def _require_states_element(op, context):
+    """The active collection if it's a state-rigged element, else report and None."""
+    collection = context.collection
+    if collection is None or not schema.is_element(collection):
+        op.report({"ERROR"}, "active collection is not an RE Element")
+        return None, None
+    data = schema.props_to_data(collection)
+    if kinds.rig_for_kind(data.kind) != kinds.RIG_STATES:
+        op.report({"ERROR"}, f"'{data.kind}' elements have no state table")
+        return None, None
+    return collection, data
+
+
+def _load_state_table(collection, data) -> state_tables.StateTable:
+    """The element's state table, seeding the default names if it has none."""
+    raw = str(collection.get("re_states", ""))
+    if raw:
+        return state_tables.StateTable.from_json(raw)  # may raise ValueError
+    return state_tables.default_state_table(data.kind, data.frames) \
+        or state_tables.StateTable()
+
+
+def _value_kind(channel) -> str:
+    """Which editing widget a channel needs: BOOL, COLOR, or FLOAT."""
+    data_path = channel[2]
+    if data_path in ("hide_render", "hide_viewport"):
+        return "BOOL"
+    if 'inputs["Color"]' in data_path:
+        return "COLOR"
+    return "FLOAT"
+
+
+class REBLEND_OT_add_state_action(bpy.types.Operator):
+    """Add a state action to every state of the active element (§4.3).
+
+    A named-but-empty default table (the "no actions yet" warning) has states
+    but nothing that visibly changes between them. This adds one channel —
+    visibility, emission, a transform, a shape key — to *all* states at once so
+    the table stays total, seeding it with a neutral value the designer then
+    differentiates per state with Set Value.
+    """
+
+    bl_idname = "reblend.add_state_action"
+    bl_label = "Add State Action"
+    bl_options = {"REGISTER", "UNDO"}
+
+    action: bpy.props.EnumProperty(
+        name="Action",
+        items=(
+            ("VISIBILITY", "Visibility", "Show or hide an object per state"),
+            ("EMISSION_STRENGTH", "Emission Strength",
+             "A material node's emission strength (lamps, glows)"),
+            ("EMISSION_COLOR", "Emission Colour", "A material node's emission colour"),
+            ("LOCATION", "Location", "One axis of an object's position (fader detents)"),
+            ("SHAPE_KEY", "Shape Key", "A shape key's value on a mesh (pressed caps)"),
+        ),
+        default="VISIBILITY",
+    )
+    target: bpy.props.StringProperty(
+        name="Target", description="Object name (visibility/location/shape key) or "
+                                   "material name (emission)")
+    node: bpy.props.StringProperty(
+        name="Node", default="Emission",
+        description="Emission shader node inside the material")
+    axis: bpy.props.EnumProperty(
+        name="Axis", items=(("0", "X", ""), ("1", "Y", ""), ("2", "Z", "")),
+        default="0")
+    key_name: bpy.props.StringProperty(name="Shape Key", description="Shape key name")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "action")
+        col.prop(self, "target")
+        if self.action in {"EMISSION_STRENGTH", "EMISSION_COLOR"}:
+            col.prop(self, "node")
+        elif self.action == "LOCATION":
+            col.prop(self, "axis")
+        elif self.action == "SHAPE_KEY":
+            col.prop(self, "key_name")
+
+    def execute(self, context):
+        collection, data = _require_states_element(self, context)
+        if collection is None:
+            return {"CANCELLED"}
+        target = self.target.strip()
+        if not target:
+            self.report({"ERROR"}, "name the target object or material")
+            return {"CANCELLED"}
+        actions = self._build_actions(target)
+        if actions is None:
+            return {"CANCELLED"}
+        try:
+            table = _load_state_table(collection, data)
+            table.add_actions(actions)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        collection["re_states"] = table.to_json()
+        self.report(
+            {"INFO"},
+            f"added {self.action.replace('_', ' ').lower()} on '{target}' "
+            f"to {table.frames} state(s)",
+        )
+        return {"FINISHED"}
+
+    def _build_actions(self, target):
+        if self.action == "VISIBILITY":
+            return state_tables.visibility(target, True)
+        if self.action == "EMISSION_STRENGTH":
+            return (state_tables.emission_strength(target, 0.0, self.node or "Emission"),)
+        if self.action == "EMISSION_COLOR":
+            return (state_tables.emission_color(
+                target, (0.0, 0.0, 0.0, 1.0), self.node or "Emission"),)
+        if self.action == "LOCATION":
+            return (state_tables.location(target, int(self.axis), 0.0),)
+        if self.action == "SHAPE_KEY":
+            key = self.key_name.strip()
+            if not key:
+                self.report({"ERROR"}, "name the shape key")
+                return None
+            return (state_tables.shape_key_value(target, key, 0.0),)
+        return None
+
+
+class REBLEND_OT_remove_state_action(bpy.types.Operator):
+    """Remove a state action (control) from every state of the active element."""
+
+    bl_idname = "reblend.remove_state_action"
+    bl_label = "Remove State Action"
+    bl_options = {"REGISTER", "UNDO"}
+
+    control: bpy.props.IntProperty(default=-1)
+
+    def execute(self, context):
+        collection, data = _require_states_element(self, context)
+        if collection is None:
+            return {"CANCELLED"}
+        try:
+            table = _load_state_table(collection, data)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        controls = table.controls()
+        if not 0 <= self.control < len(controls):
+            self.report({"ERROR"}, "no such state action")
+            return {"CANCELLED"}
+        label = state_tables.describe_channel(controls[self.control][0])
+        for channel in controls[self.control]:
+            table.remove_channel(channel)
+        collection["re_states"] = table.to_json()
+        self.report({"INFO"}, f"removed {label}")
+        return {"FINISHED"}
+
+
+class REBLEND_OT_set_state_value(bpy.types.Operator):
+    """Set one state's value for one control on the active element (§4.3)."""
+
+    bl_idname = "reblend.set_state_value"
+    bl_label = "Set State Value"
+    bl_options = {"REGISTER", "UNDO"}
+
+    state: bpy.props.IntProperty(default=-1)
+    control: bpy.props.IntProperty(default=-1)
+    value_kind: bpy.props.StringProperty(default="FLOAT")
+    bool_value: bpy.props.BoolProperty(name="Visible", default=True)
+    float_value: bpy.props.FloatProperty(name="Value", default=0.0)
+    color_value: bpy.props.FloatVectorProperty(
+        name="Colour", size=4, subtype="COLOR", min=0.0, max=1.0,
+        default=(0.0, 0.0, 0.0, 1.0))
+
+    def invoke(self, context, event):
+        collection, data = _require_states_element(self, context)
+        if collection is None:
+            return {"CANCELLED"}
+        try:
+            table = _load_state_table(collection, data)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        channel = self._channel(table)
+        if channel is None:
+            return {"CANCELLED"}
+        current = table.value_in(self.state, channel)
+        self.value_kind = _value_kind(channel)
+        if self.value_kind == "BOOL":
+            # The stored value is `hide` (1.0 = hidden); present it as Visible.
+            self.bool_value = not bool(current)
+        elif self.value_kind == "COLOR":
+            self.color_value = tuple(current) if current else (0.0, 0.0, 0.0, 1.0)
+        else:
+            self.float_value = float(current) if current is not None else 0.0
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        col = self.layout.column()
+        if self.value_kind == "BOOL":
+            col.prop(self, "bool_value")
+        elif self.value_kind == "COLOR":
+            col.prop(self, "color_value")
+        else:
+            col.prop(self, "float_value")
+
+    def execute(self, context):
+        collection, data = _require_states_element(self, context)
+        if collection is None:
+            return {"CANCELLED"}
+        try:
+            table = _load_state_table(collection, data)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        channel = self._channel(table)
+        if channel is None:
+            return {"CANCELLED"}
+        for chan in table.controls()[self.control]:
+            table.set_value(self.state, chan, self._value_for(chan))
+        collection["re_states"] = table.to_json()
+        self.report({"INFO"}, f"set '{table.states[self.state].name}' value")
+        return {"FINISHED"}
+
+    def _channel(self, table):
+        controls = table.controls()
+        if not (0 <= self.state < table.frames and 0 <= self.control < len(controls)):
+            self.report({"ERROR"}, "no such state value")
+            return None
+        return controls[self.control][0]
+
+    def _value_for(self, channel):
+        kind = _value_kind(channel)
+        if kind == "BOOL":
+            return float(not self.bool_value)  # Visible -> `hide` value
+        if kind == "COLOR":
+            return tuple(self.color_value)
+        return float(self.float_value)
+
+
 CLASSES = (
     REBLEND_OT_import_project,
     REBLEND_OT_validate,
     REBLEND_OT_set_frame_size,
     REBLEND_OT_render_elements,
     REBLEND_OT_generate_rig,
+    REBLEND_OT_add_state_action,
+    REBLEND_OT_remove_state_action,
+    REBLEND_OT_set_state_value,
 )

@@ -56,11 +56,15 @@ class REBLEND_PT_elements(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        settings = context.scene.reblend
         elements = [c for c in bpy.data.collections if schema.is_element(c)]
         if not elements:
             layout.label(text="No elements — import a project", icon="INFO")
             return
 
+        unsized = sum(
+            1 for c in elements if not schema.props_to_data(c).has_frame_size
+        )
         for collection in sorted(elements, key=lambda c: c.name):
             data = schema.props_to_data(collection)
             row = layout.row(align=True)
@@ -70,12 +74,29 @@ class REBLEND_PT_elements(bpy.types.Panel):
             if not data.has_frame_size:
                 row.label(text="", icon="ERROR")
 
+        # Frame pixel size isn't in the RE Lua (§5.2), so fresh imports land
+        # unsized. Offer a bulk fill so the designer isn't hand-editing dozens
+        # of elements to clear the expected per-element warnings.
+        if unsized:
+            box = layout.box()
+            box.label(text=f"{unsized} element(s) need a frame size",
+                      icon="ERROR")
+            row = box.row(align=True)
+            row.prop(settings, "frame_w")
+            row.prop(settings, "frame_h")
+            box.operator("reblend.set_frame_size",
+                         text="Set All Missing Sizes",
+                         icon="FULLSCREEN_ENTER").scope = "MISSING"
+
         active = context.collection
         if active is not None and schema.is_element(active):
             box = layout.box()
             data = schema.props_to_data(active)
             box.label(text=f"Active: {data.path}", icon="OUTLINER_COLLECTION")
             box.label(text=f"node '{data.node}' · {data.frame_w}x{data.frame_h}px")
+            row = box.row(align=True)
+            row.prop(active, '["re_frame_w"]', text="Frame W")
+            row.prop(active, '["re_frame_h"]', text="Frame H")
             box.operator("reblend.generate_rig", icon="DRIVER")
 
 
@@ -97,15 +118,51 @@ class REBLEND_PT_validation(bpy.types.Panel):
             text=f"{errors} error(s), {len(findings) - errors} warning(s)",
             icon="CANCEL" if errors else "CHECKMARK",
         )
-        for finding in findings:
+        # Collapse repeats of the same code (e.g. an unsized fresh import fires
+        # one frame-size warning per element) into a single counted box, so a
+        # wall of identical findings can't bury the ones that differ.
+        for (severity, code), group in _group_by_code(findings):
             box = layout.box()
-            row = box.row()
-            row.label(
-                text=f"{finding.code}: {finding.subject or finding.panel}",
-                icon=_SEVERITY_ICONS.get(finding.severity, "QUESTION"),
-            )
-            for line in _wrap(finding.message):
-                box.label(text=line)
+            icon = _SEVERITY_ICONS.get(severity, "QUESTION")
+            if len(group) == 1:
+                finding = group[0]
+                box.label(text=f"{code}: {finding.subject or finding.panel}",
+                          icon=icon)
+                for line in _wrap(finding.message):
+                    box.label(text=line)
+                continue
+
+            box.label(text=f"{code}: {len(group)} items", icon=icon)
+            messages = {f.message for f in group}
+            if len(messages) == 1:
+                # Identical text (the frame-size case): show it once, then
+                # list who it applies to.
+                for line in _wrap(next(iter(messages))):
+                    box.label(text=line)
+                subjects = ", ".join(
+                    sorted(f.subject or f.panel for f in group if f.subject or f.panel)
+                )
+                for line in _wrap(subjects):
+                    box.label(text=line, icon="BLANK1")
+            else:
+                # Same code, different detail per subject: keep every line.
+                for finding in group:
+                    who = finding.subject or finding.panel
+                    prefix = f"{who}: " if who else ""
+                    for line in _wrap(f"{prefix}{finding.message}"):
+                        box.label(text=line, icon="BLANK1")
+
+
+def _group_by_code(findings):
+    """Group findings by (severity, code), preserving first-seen order.
+
+    Returns a list of ((severity, code), [findings]) so the report can show one
+    box per code with a count, instead of one box per finding.
+    """
+    groups: dict[tuple[str, str], list] = {}
+    for finding in findings:
+        groups.setdefault((finding.severity, finding.code), []).append(finding)
+    return list(groups.items())
 
 
 def _wrap(text: str, width: int = 55) -> list[str]:

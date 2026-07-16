@@ -40,6 +40,20 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
         default=1,
         min=1,
     )
+    frame_w: bpy.props.IntProperty(
+        name="Frame W",
+        description="Per-frame width in pixels applied by Set Frame Size. Frame "
+                    "size isn't in the RE Lua (§5.2) — the designer picks it, so "
+                    "fresh imports start unsized until this fills them in",
+        default=0,
+        min=0,
+    )
+    frame_h: bpy.props.IntProperty(
+        name="Frame H",
+        description="Per-frame height in pixels applied by Set Frame Size",
+        default=0,
+        min=0,
+    )
     findings: bpy.props.CollectionProperty(type=REBLEND_PG_finding)
     findings_index: bpy.props.IntProperty(default=0)
 

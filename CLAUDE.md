@@ -13,7 +13,12 @@ Implementation has started with the Blender-independent layers. Repository conte
   with the design doc, the design doc wins and the roadmap gets fixed.
 - `README.md` — public-facing overview; keep it consistent with the design doc.
 - `reblend/` — the extension package (import name `reblend`; distribution/repo name `re-blend`).
-  Only `project/lua_reader.py` (sandboxed GUI2D Lua reading) exists so far.
+  The M1 (MVP) code is in place across the planned module layout: `project/` (sandboxed Lua
+  reading, motherboard steps, PNG metadata, project link/import, validation engine), `model/`
+  (versioned RE Element schema + migrations, kinds, state tables, calibration, rigs), `render/`
+  (stitcher, output validators, Blender I/O, batch renderer), `ui/` (N-panel, operators). Only
+  `model/rigs.py`, `render/bpy_io.py`, `render/renderer.py`, and `ui/*` import `bpy` (lazily
+  via `reblend.register()`); everything else is pure Python under test.
 - `tests/` — pytest suite with SDK-convention fixtures under `tests/fixtures/`.
 - `blender_manifest.toml` — Blender 4.2 LTS+ extension manifest; `pyproject.toml` is dev
   tooling only (RE-Blend is never pip-installed into Blender).

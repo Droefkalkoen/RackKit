@@ -21,7 +21,7 @@ def test_all_four_panels_present(device):
 def test_knob_node(device):
     knob = device.panels["front"]["knob_threshold"]
     assert knob.offset == (950, 120)
-    assert knob.graphics == [Graphic(path="Knob_63x63_61frames", frames=61)]
+    assert knob.graphics == [Graphic(path="Knob_65x65_61frames", frames=61)]
     assert knob.frames == 61
 
 

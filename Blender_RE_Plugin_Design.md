@@ -171,11 +171,23 @@ provides:
   origin lands on. This is a modelling convenience only: `re_offset_*` and the Lua stay
   top-left panel pixels, and switching origins just shifts where guides and registration
   empties sit in Blender. **Re-import & Reposition** re-reads the project read-only and
-  snaps every already-placed element onto the current scale and origin — the whole
-  element travels (its registration empty is the anchor, and its modelled geometry is
-  shifted by the same world delta so it stays registered), so a calibration change (or an
-  upstream layout edit) can be re-applied in one click instead of re-importing into an
-  empty scene.
+  snaps every already-placed element onto the current scale and origin. Positioning is
+  done in world space (via `matrix_world`), so an element parented under an organising
+  master empty still lands correctly. A **Move Geometry** toggle chooses whether the
+  element's modelled geometry travels with the reposition (default — the registration
+  empty is the anchor and geometry shifts by the same world delta to stay registered) or
+  only the empties and guide boxes move. Either way a calibration change (or an upstream
+  layout edit) can be re-applied in one click instead of re-importing into an empty scene.
+- **Camera Axis** and **Knob Rotation Axis** selectors. The render camera looks along a
+  chosen signed world axis (default −Y, the front orthographic view) applied through the
+  registration empty, so a device modelled facing another way — or a single tilted
+  element — still renders square. The knob rotation axis defaults to *follow the camera
+  axis* (so the rotor faces the camera and spins in view) but can be pinned to an explicit
+  world axis when the rotor geometry demands it.
+- **Scale to Bounds**: snap the active object to exactly `re_frame_w × re_frame_h` world
+  units across the camera's screen plane — stretch to fill, or uniform to fit inside.
+  Mostly for backdrops (rough plane → exact panel rect) and any static art sized to a
+  known frame.
 
 ## 5. Rendering engine
 

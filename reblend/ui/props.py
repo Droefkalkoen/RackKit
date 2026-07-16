@@ -12,6 +12,18 @@ import bpy
 from ..model import calibration
 
 
+#: Signed world axes offered by the Camera Axis / Knob Rotation Axis settings,
+#: −Y first so the §4.4 front-view default leads the dropdown.
+_AXIS_ITEMS = (
+    ("neg_y", "-Y (Front View)", "Look along −Y — Blender's front orthographic view"),
+    ("pos_y", "+Y (Back View)", "Look along +Y"),
+    ("neg_x", "-X", "Look along −X"),
+    ("pos_x", "+X", "Look along +X"),
+    ("neg_z", "-Z (Top-Down)", "Look along −Z"),
+    ("pos_z", "+Z (Bottom-Up)", "Look along +Z"),
+)
+
+
 class REBLEND_PG_finding(bpy.types.PropertyGroup):
     """One row of the last validation report (mirrors validation.Finding)."""
 
@@ -56,6 +68,36 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
              "World origin at the panel centre"),
         ),
         default=calibration.ORIGIN_TOP_LEFT,
+    )
+    reposition_geometry: bpy.props.BoolProperty(
+        name="Move Geometry Too",
+        description="When Re-import & Reposition moves an element, also shift "
+                    "its modelled geometry (backdrop plane, control meshes) by "
+                    "the same amount so it stays registered to its empty. Turn "
+                    "off to move only the registration empties and guide boxes "
+                    "and leave your models where they are",
+        default=True,
+    )
+    camera_axis: bpy.props.EnumProperty(
+        name="Camera Axis",
+        description="World axis each element's render camera looks along (§4.4). "
+                    "The default −Y is Blender's front orthographic view; change "
+                    "it if the device is modelled facing another way. Applied "
+                    "through the registration empty, so per-element tilt still "
+                    "works",
+        items=_AXIS_ITEMS,
+        default=calibration.DEFAULT_CAMERA_AXIS,
+    )
+    rotation_axis: bpy.props.EnumProperty(
+        name="Knob Rotation Axis",
+        description="World axis a knob's rotor spins around when Generate Rig "
+                    "builds its turntable driver. Auto follows the Camera Axis "
+                    "through the registration empty (the rotor faces the camera "
+                    "and spins in view) — pick an explicit axis to override",
+        items=(("auto", "Auto (Camera Axis)",
+                "Spin around the camera axis through the registration empty"),)
+              + _AXIS_ITEMS,
+        default="auto",
     )
     frame_w: bpy.props.IntProperty(
         name="Frame W",

@@ -46,7 +46,12 @@ class REBLEND_PT_project(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(settings, "ppb")
         row.prop(settings, "rack_units")
-        layout.operator("reblend.import_project", icon="IMPORT")
+        layout.prop(settings, "origin")
+        col = layout.column(align=True)
+        col.operator("reblend.import_project", text="Import RE Project",
+                     icon="IMPORT").reposition = False
+        col.operator("reblend.import_project", text="Re-import & Reposition",
+                     icon="FILE_REFRESH").reposition = True
 
         layout.separator()
         layout.operator("reblend.validate", icon="CHECKMARK")

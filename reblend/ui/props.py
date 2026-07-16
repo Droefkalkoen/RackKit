@@ -40,6 +40,23 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
         default=1,
         min=1,
     )
+    origin: bpy.props.EnumProperty(
+        name="World Origin",
+        description="Which panel pixel the Blender world origin lands on when "
+                    "placing elements (§4.4). This only moves guides and "
+                    "registration empties in Blender — re_offset and the RE Lua "
+                    "stay top-left panel pixels. Change it, then Re-import & "
+                    "Reposition to move existing elements onto the new origin",
+        items=(
+            (calibration.ORIGIN_TOP_LEFT, "Top-Left of Device",
+             "Panel pixel (0,0) at the world origin — the native RE convention"),
+            (calibration.ORIGIN_TOP_CENTER, "Top-Center",
+             "World origin at the middle of the panel's top edge"),
+            (calibration.ORIGIN_CENTER, "Center",
+             "World origin at the panel centre"),
+        ),
+        default=calibration.ORIGIN_TOP_LEFT,
+    )
     frame_w: bpy.props.IntProperty(
         name="Frame W",
         description="Per-frame width in pixels applied by Set Frame Size. Frame "

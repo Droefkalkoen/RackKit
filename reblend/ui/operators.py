@@ -34,6 +34,18 @@ def _settings(context):
     return context.scene.reblend
 
 
+def _set_world_location(obj, world_co) -> None:
+    """Place ``obj`` at a world-space location, honouring any parent transform.
+
+    Assigning ``obj.location`` sets the *local* offset, which lands a parented
+    object in the wrong place; rewriting ``matrix_world`` sets the true world
+    position and lets Blender back out the local transform.
+    """
+    matrix = obj.matrix_world.copy()
+    matrix.translation = Vector(world_co)
+    obj.matrix_world = matrix
+
+
 def _project_root(context) -> Path:
     raw = _settings(context).project_root
     if not raw:
@@ -148,18 +160,52 @@ class REBLEND_OT_import_project(bpy.types.Operator):
 
         Re-import keeps the registration empty (it is user-owned calibration),
         so a plain re-read never moves anything. Reposition deliberately snaps
-        the registration empty and rebuilds the guide boxes from the freshly
-        read placements, the current Pixels/Unit and the current World Origin.
+        the element onto the freshly read placement, the current Pixels/Unit
+        and the current World Origin.
+
+        Everything is computed in *world* space (via ``matrix_world``), so an
+        element whose empty or geometry is parented under an organising master
+        empty still lands where it should instead of being nudged by only its
+        local offset. With Move Geometry on (the default) the whole element
+        travels by the same delta the empty moves, keeping modelled geometry
+        registered; with it off only the empty moves. Guide boxes are always
+        rebuilt at the new absolute coordinates.
         """
         empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
         if empty is not None and spec.placements:
             primary = spec.placements[0]
             origin = self._origin_offset(link, settings, primary.panel)
             cx, cy = self._center_px(spec, primary)
-            empty.location = Vector(
+            target = Vector(
                 calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
+            delta = target - empty.matrix_world.translation
+            if settings.reposition_geometry:
+                self._translate_element(collection, delta)
+            else:
+                _set_world_location(empty, target)
         self._clear_guide_boxes(collection)
         self._guide_boxes(collection, spec, link, settings)
+
+    @staticmethod
+    def _translate_element(collection, delta: Vector) -> None:
+        """Shift the element's objects by ``delta`` in world space.
+
+        Each element *root* moves; a child parented to another object in the
+        same collection is left alone so it rides its parent (moving both would
+        double-shift it). A root parented to something *outside* the element —
+        e.g. every empty parented under one organising master empty — still
+        gets the delta, so those elements are not silently left behind. Guide
+        boxes are skipped because reposition rebuilds them at new coordinates.
+        """
+        if delta.length == 0.0:
+            return
+        members = set(collection.objects)
+        for obj in collection.objects:
+            if obj.get("re_guide") == "box":
+                continue
+            if obj.parent is not None and obj.parent in members:
+                continue  # rides an in-collection parent
+            _set_world_location(obj, obj.matrix_world.translation + delta)
 
     def _panel_root(self, context, panel: str) -> bpy.types.Collection:
         name = PANEL_ROOTS[panel]
@@ -344,6 +390,80 @@ class REBLEND_OT_set_frame_size(bpy.types.Operator):
         return {"FINISHED"}
 
 
+#: Which two world-axis indices are the camera's screen plane (width, height)
+#: for a given Camera Axis — the pair perpendicular to the view direction.
+_SCREEN_AXES = {
+    "neg_y": (0, 2), "pos_y": (0, 2),   # front/back: X wide, Z tall
+    "neg_x": (1, 2), "pos_x": (1, 2),   # side: Y wide, Z tall
+    "neg_z": (0, 1), "pos_z": (0, 1),   # top/bottom: X wide, Y tall
+}
+
+
+class REBLEND_OT_scale_to_bounds(bpy.types.Operator):
+    """Scale the active object to the active element's frame bounds (§5.2).
+
+    Handy for backdrops: model a rough plane, then snap it to exactly
+    ``re_frame_w × re_frame_h`` in world units (at the current Pixels/Unit)
+    across the camera's screen plane. ``Stretch`` fills the bounds on both
+    axes independently; ``Uniform`` keeps the object's aspect and fits inside.
+
+    Scaling is applied along the object's local axes, so it is exact for an
+    axis-aligned (un-rotated) object — the usual case for a panel plane.
+    """
+
+    bl_idname = "reblend.scale_to_bounds"
+    bl_label = "Scale to Bounds"
+    bl_options = {"REGISTER", "UNDO"}
+
+    fit: bpy.props.EnumProperty(
+        name="Fit",
+        items=(
+            ("STRETCH", "Stretch", "Fill the frame on both axes independently"),
+            ("UNIFORM", "Uniform", "Preserve aspect ratio and fit inside the frame"),
+        ),
+        default="STRETCH",
+    )
+
+    def execute(self, context):
+        collection = context.collection
+        if collection is None or not schema.is_element(collection):
+            self.report({"ERROR"}, "active collection is not an RE Element")
+            return {"CANCELLED"}
+        data = schema.props_to_data(collection)
+        if not data.has_frame_size:
+            self.report({"ERROR"}, f"'{data.path}': set a frame size first")
+            return {"CANCELLED"}
+
+        obj = context.active_object
+        if obj is None:
+            self.report({"ERROR"}, "select the object to scale first")
+            return {"CANCELLED"}
+
+        settings = _settings(context)
+        w_idx, h_idx = _SCREEN_AXES[settings.camera_axis]
+        dims = obj.dimensions
+        cur_w, cur_h = dims[w_idx], dims[h_idx]
+        if cur_w <= 0.0 or cur_h <= 0.0:
+            self.report({"ERROR"}, "object has no extent across the camera plane")
+            return {"CANCELLED"}
+
+        target_w = data.frame_w / settings.ppb
+        target_h = data.frame_h / settings.ppb
+        sw, sh = target_w / cur_w, target_h / cur_h
+        if self.fit == "UNIFORM":
+            sw = sh = min(sw, sh)
+
+        scale = list(obj.scale)
+        scale[w_idx] *= sw
+        scale[h_idx] *= sh
+        obj.scale = scale
+        self.report(
+            {"INFO"},
+            f"scaled '{obj.name}' to {data.frame_w}x{data.frame_h}px bounds",
+        )
+        return {"FINISHED"}
+
+
 class REBLEND_OT_render_elements(bpy.types.Operator):
     """Batch-render element sheets into the linked project's GUI2D (§5.1)."""
 
@@ -383,6 +503,7 @@ class REBLEND_OT_render_elements(bpy.types.Operator):
         results = renderer.render_elements(
             context.scene, collections, out_dir, ppb=settings.ppb,
             inactive_render=settings.inactive_render,
+            view_axis=calibration.axis_vector(settings.camera_axis),
         )
         findings = [f for result in results for f in result.findings]
         props.store_report(settings, findings)
@@ -431,7 +552,7 @@ class REBLEND_OT_generate_rig(bpy.types.Operator):
             if rotor is None:
                 self.report({"ERROR"}, "select the knob's rotating part first")
                 return {"CANCELLED"}
-            axis = self._knob_axis(collection)
+            axis = self._knob_axis(context, collection)
             try:
                 rigs.ensure_turntable_driver(
                     rotor,
@@ -479,13 +600,21 @@ class REBLEND_OT_generate_rig(bpy.types.Operator):
         self.report({"INFO"}, f"'{data.kind}' elements need no rig")
         return {"FINISHED"}
 
-    def _knob_axis(self, collection) -> tuple[float, float, float]:
-        """The knob spins around the registration empty's view axis (§4.2)."""
-        name = str(collection.get("re_registration", ""))
-        empty = bpy.data.objects.get(name)
+    def _knob_axis(self, context, collection) -> tuple[float, float, float]:
+        """The world axis a knob spins around (§4.2).
+
+        An explicit Knob Rotation Axis setting wins outright; otherwise the
+        knob follows the Camera Axis through the registration empty, so it
+        faces the camera and spins in view even when the empty is tilted.
+        """
+        settings = _settings(context)
+        if settings.rotation_axis != "auto":
+            return calibration.axis_vector(settings.rotation_axis)
+        base = Vector(calibration.axis_vector(settings.camera_axis))
+        empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
         if empty is None:
-            return tuple(renderer.VIEW_AXIS)
-        axis = empty.matrix_world.to_quaternion() @ renderer.VIEW_AXIS
+            return tuple(base)
+        axis = empty.matrix_world.to_quaternion() @ base
         return tuple(axis.normalized())
 
 
@@ -742,6 +871,7 @@ CLASSES = (
     REBLEND_OT_import_project,
     REBLEND_OT_validate,
     REBLEND_OT_set_frame_size,
+    REBLEND_OT_scale_to_bounds,
     REBLEND_OT_render_elements,
     REBLEND_OT_generate_rig,
     REBLEND_OT_add_state_action,

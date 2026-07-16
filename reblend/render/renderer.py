@@ -97,6 +97,7 @@ def render_elements(
     out_dir: Path | str,
     ppb: float = calibration.DEFAULT_PPB,
     inactive_render: str = INACTIVE_SHADOW,
+    view_axis: "Vector | tuple | None" = None,
 ) -> list[RenderResult]:
     """Render several elements' sheets; one element's failure stops nobody else."""
     results = []
@@ -105,7 +106,7 @@ def render_elements(
             results.append(
                 render_element(
                     scene, collection, out_dir, ppb=ppb,
-                    inactive_render=inactive_render,
+                    inactive_render=inactive_render, view_axis=view_axis,
                 )
             )
         except RenderError as exc:
@@ -124,6 +125,7 @@ def render_element(
     out_dir: Path | str,
     ppb: float = calibration.DEFAULT_PPB,
     inactive_render: str = INACTIVE_SHADOW,
+    view_axis: "Vector | tuple | None" = None,
 ) -> RenderResult:
     """Render one element collection to ``<out_dir>/<re_path>.png``."""
     data = schema.props_to_data(collection)
@@ -140,8 +142,9 @@ def render_element(
     result = RenderResult(element=data.path)
     _warn_shadow_engine(result, scene, collection, data, inactive_render)
 
+    axis = Vector(view_axis) if view_axis is not None else VIEW_AXIS
     with _element_scene_state(scene, collection, inactive_render):
-        camera = _make_camera(scene, data, registration, ppb)
+        camera = _make_camera(scene, data, registration, ppb, axis)
         try:
             _configure_render(scene, data)
             with tempfile.TemporaryDirectory(prefix="reblend_") as scratch:
@@ -287,7 +290,8 @@ def _find_registration(collection) -> "bpy.types.Object":
     )
 
 
-def _make_camera(scene, data: schema.ElementData, registration, ppb: float):
+def _make_camera(scene, data: schema.ElementData, registration, ppb: float,
+                 view_axis: Vector = VIEW_AXIS):
     cam_data = bpy.data.cameras.new(f"reblend_cam_{data.path}")
     cam_data.type = "ORTHO"
     cam_data.ortho_scale = calibration.ortho_scale(data.frame_w, data.frame_h, ppb)
@@ -296,7 +300,7 @@ def _make_camera(scene, data: schema.ElementData, registration, ppb: float):
 
     # Fixed per element, never moves between frames: registration is true by
     # construction (§4.2). The camera sits on the view axis through the empty.
-    axis = (registration.matrix_world.to_quaternion() @ VIEW_AXIS).normalized()
+    axis = (registration.matrix_world.to_quaternion() @ view_axis).normalized()
     camera.location = registration.matrix_world.translation + axis * calibration.CAMERA_DISTANCE
     camera.rotation_euler = axis.to_track_quat("Z", "Y").to_euler()
     scene.camera = camera

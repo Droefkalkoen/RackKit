@@ -47,11 +47,15 @@ class REBLEND_PT_project(bpy.types.Panel):
         row.prop(settings, "ppb")
         row.prop(settings, "rack_units")
         layout.prop(settings, "origin")
+        row = layout.row(align=True)
+        row.prop(settings, "camera_axis")
+        row.prop(settings, "rotation_axis")
         col = layout.column(align=True)
         col.operator("reblend.import_project", text="Import RE Project",
                      icon="IMPORT").reposition = False
         col.operator("reblend.import_project", text="Re-import & Reposition",
                      icon="FILE_REFRESH").reposition = True
+        col.prop(settings, "reposition_geometry")
 
         layout.separator()
         layout.operator("reblend.validate", icon="CHECKMARK")
@@ -91,6 +95,8 @@ class REBLEND_PT_active(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(active, '["re_frame_w"]', text="Frame W")
         row.prop(active, '["re_frame_h"]', text="Frame H")
+        if data.has_frame_size:
+            layout.operator("reblend.scale_to_bounds", icon="FULLSCREEN_EXIT")
         layout.operator("reblend.generate_rig", icon="DRIVER")
 
 

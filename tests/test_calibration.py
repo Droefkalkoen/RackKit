@@ -63,6 +63,18 @@ def test_world_origin_shifts_placement():
         pytest.approx((950, 120))
 
 
+def test_axis_vector():
+    assert cal.axis_vector("neg_y") == (0.0, -1.0, 0.0)
+    assert cal.axis_vector("pos_z") == (0.0, 0.0, 1.0)
+    assert cal.axis_vector("pos_x") == (1.0, 0.0, 0.0)
+    # unknown names fall back to the default front-view axis
+    assert cal.axis_vector("bogus") == cal.axis_vector(cal.DEFAULT_CAMERA_AXIS)
+    # every named axis feeds dominant_axis cleanly (used by the knob rig)
+    for name in cal.AXIS_VECTORS:
+        index, sign = cal.dominant_axis(cal.axis_vector(name))
+        assert 0 <= index <= 2 and sign in (1.0, -1.0)
+
+
 def test_dominant_axis():
     assert cal.dominant_axis((0.0, -1.0, 0.0)) == (1, -1.0)
     assert cal.dominant_axis((0.0, 0.1, 0.9)) == (2, 1.0)

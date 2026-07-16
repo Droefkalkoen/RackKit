@@ -44,6 +44,9 @@ __all__ = [
     "ORIGIN_CENTER",
     "ORIGINS",
     "origin_offset_px",
+    "AXIS_VECTORS",
+    "DEFAULT_CAMERA_AXIS",
+    "axis_vector",
     "panel_px_to_world",
     "world_to_panel_px",
     "element_center_px",
@@ -56,6 +59,25 @@ ORIGIN_TOP_LEFT = "top_left"
 ORIGIN_TOP_CENTER = "top_center"
 ORIGIN_CENTER = "center"
 ORIGINS = (ORIGIN_TOP_LEFT, ORIGIN_TOP_CENTER, ORIGIN_CENTER)
+
+#: Named signed world axes for the configurable camera / knob-rotation axis
+#: settings. The camera looks along its chosen axis from that side of the
+#: panel; a knob spins around its chosen axis. The §4.4 default is −Y (the
+#: panel faces −Y, Blender's front orthographic view).
+AXIS_VECTORS = {
+    "pos_x": (1.0, 0.0, 0.0),
+    "neg_x": (-1.0, 0.0, 0.0),
+    "pos_y": (0.0, 1.0, 0.0),
+    "neg_y": (0.0, -1.0, 0.0),
+    "pos_z": (0.0, 0.0, 1.0),
+    "neg_z": (0.0, 0.0, -1.0),
+}
+DEFAULT_CAMERA_AXIS = "neg_y"
+
+
+def axis_vector(name: str) -> tuple[float, float, float]:
+    """The unit world vector for a named axis, defaulting to the −Y view axis."""
+    return AXIS_VECTORS.get(name, AXIS_VECTORS[DEFAULT_CAMERA_AXIS])
 
 #: The SDK's hi-res panel world (design §1): panels are 3770 px wide, 345 px
 #: per rack unit tall, 130 px folded — confirmed against RE2DRender, which

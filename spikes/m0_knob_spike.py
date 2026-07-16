@@ -34,16 +34,16 @@ from mathutils import Vector
 # The values below match tests/fixtures/silence_detector (a 63x63, 61-frame
 # turntable knob) so the script is runnable as-is against a matching rig.
 # ---------------------------------------------------------------------------
-NODE = "knob_threshold"          # device_2D.lua node name -> output basename
-FRAME_W = 63                     # re_frame_w  (px)
-FRAME_H = 63                     # re_frame_h  (px)
+NODE = "knob_tone"          # device_2D.lua node name -> output basename
+FRAME_W = 128                     # re_frame_w  (px)
+FRAME_H = 128                     # re_frame_h  (px)
 FRAMES = 61                      # re_frames   (must equal `frames` in device_2D.lua)
 SWEEP_DEG = 300.0                # default -150..+150; per-element in the real tool
 PPB = 100.0                      # calibration: panel pixels per Blender unit (§4.4)
 
 # Scene objects that make up the element. Create/rename these in your pilot:
-ROTOR = "knob_threshold_rotor"   # the rotating mesh; its ORIGIN must sit on the axis
-REG_EMPTY = "reg_knob_threshold"  # registration empty marking the rotation axis (§4.2)
+ROTOR = "knob_tone_rotor"   # the rotating mesh; its ORIGIN must sit on the axis
+REG_EMPTY = "reg_knob_tone"  # registration empty marking the rotation axis (§4.2)
 
 # Where the finished strip is written. Point this at the LINKED project's GUI2D
 # so RE2DRender can pick it up. The basename must match device_2D.lua `path`.
@@ -52,7 +52,7 @@ FRAME_TMP = os.path.join(bpy.app.tempdir, "reblend_m0")
 
 # Which world axis the knob spins around / the camera looks down. Default +Z
 # (panel modelled in the XY plane, facing up). Change to match your pilot.
-KNOB_AXIS = Vector((0.0, 0.0, 1.0))
+KNOB_AXIS = Vector((0.0, 1.0, 0.0))
 
 
 def calibrate_camera(scene):

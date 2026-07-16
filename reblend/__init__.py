@@ -26,7 +26,11 @@ def register() -> None:
     ui.register()
     if _migrate_on_load not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_migrate_on_load)
-    _migrate_all()  # the file already open when the add-on enables
+    # Migrate the file already open when the add-on enables. bpy.data is
+    # restricted during register() (a _RestrictData proxy), so this cannot run
+    # inline — defer it to a one-shot timer that fires once the restriction
+    # lifts. Returning None from the callback unregisters the timer.
+    bpy.app.timers.register(_migrate_open_file, first_interval=0.0)
 
 
 def unregister() -> None:
@@ -51,6 +55,14 @@ def _migrate_all() -> None:
                 schema.migrate(collection)
             except ValueError as exc:
                 print(f"[RE-Blend] {collection.name}: {exc}")
+
+
+def _migrate_open_file():
+    """One-shot timer callback: migrate the file open at enable time, once the
+    register()-time ``bpy.data`` restriction has lifted. Returns ``None`` so the
+    timer does not repeat."""
+    _migrate_all()
+    return None
 
 
 def _migrate_on_load(_filepath=None, _none=None) -> None:

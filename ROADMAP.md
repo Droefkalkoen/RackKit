@@ -22,7 +22,7 @@ Two more rules that shape the ordering:
    and the fancier layout-editing features stay parked until that's solid (§10.5). Corrupting
    someone's hand-commented config file once is one time too many.
 
-## M0 — Spike: prove the pixels
+## M0 — Spike: prove the pixels ✅ PASSED
 
 The smallest thing that can fail: calibration, one hand-tagged knob element, the auto-generated
 turntable driver, a strip render, in-process stitching, and straight-alpha verification of the
@@ -33,6 +33,13 @@ No UI polish, no import, no schema migrations — one knob, done properly.
 **Done when:** a 61-frame knob strip rendered from the pilot project's `.blend` is accepted by
 RE2DRender and turns smoothly in RE2DPreview. Smoothly means no wobble and no jumps — both
 failure modes this milestone exists to kill.
+
+**Status — PASSED.** A 61-frame knob rendered from the pilot `.blend` is accepted by RE2DRender
+(2.0.11b258) and sweeps min→max in RE2DPreview with clean straight-alpha edges, no wobble, and
+no jumps. The riskiest assumption (§10.1) is retired. What it took, and the RE2DRender input
+contract discovered along the way, is written up in
+[`docs/findings-m0.md`](docs/findings-m0.md) — including the **multiples-of-5 frame-size rule**
+M1's `render/` must enforce so RE2DRender never reframes a sheet.
 
 ## M1 — MVP
 

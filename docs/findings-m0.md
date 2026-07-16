@@ -11,10 +11,11 @@ RE2DRender accepts*. Everything below was observed directly, not inferred from d
 - **Invocation:** `./RE2DRender.exe ./Input/ ./Output/` — note this default run reports
   *"Processing GUI at 1/5 scale"*, i.e. RE2DRender produces the downscaled set itself. RE-Blend
   must **not** generate the 0.5×/0.2× assets (design §5.2, §9) — confirmed the tool owns that.
-- **Status:** RE2DRender now completes a full render of the one-knob device (Gate A **passed**).
-  The findings below are what it took to get there. The alpha-cleanliness and knob-motion
-  findings `m0-acceptance-test.md` Gates B/C ask for are **still open** — see
-  [§ Open](#open--still-to-confirm).
+- **Status: M0 PASSED.** All three acceptance gates are green — RE2DRender accepts and renders
+  the one-knob device (Gate A), and the knob shows clean straight-alpha edges (Gate B) and turns
+  with no wobble and no jumps in RE2DPreview (Gate C). The riskiest assumption in the design
+  (§10.1) is retired. The findings below are the reference for how it was done — M1's render
+  module should reproduce them, not rediscover them.
 
 ---
 
@@ -122,17 +123,19 @@ This is the same substitution already visible in the scenegraph dump —
 `Node "knob_tone" is visual "knob_tone-reframed"`. RE2DRender accepted the render but **did not
 use the pixels as authored**: it re-cropped/padded each frame to bounds it considers valid.
 
-Observed during **1/5-scale** processing, so the likely rule is that a frame's width and height
-must each be **divisible by 5** (the SDK art is authored at 5× the display size; a frame that
-doesn't divide cleanly by 5 can't downscale to integer display pixels, so it gets reframed to
-the nearest supported size). *Exact divisor not yet pinned — verify.*
+**The rule (confirmed by test):** a frame's width and height must each be **divisible by 5**.
+The SDK art is authored at 5× the display size (this run's `1/5-scale` processing is that
+downscale); a frame whose dimensions don't divide cleanly by 5 can't downscale to integer
+display pixels, so RE2DRender reframes it to the nearest supported size. Sizing the knob's
+`frameW`/`frameH` as multiples of 5 makes the `-reframed` copy and the warning disappear.
 
 **Implication for RE-Blend (important):** a tool-side reframe can shift a frame's content
 relative to its box and **break pixel-exact registration** (design §4.2) — the very wobble M0
 exists to kill. RE-Blend must render at **supported frame bounds** so RE2DRender never has to
-reframe. Concretely: pick per-frame `frameW`/`frameH` that are multiples of 5 (pending the
-confirmed divisor). Until then, treat the presence of any `-reframed` copy as a **warning to act
-on**, and check Gate C against the reframed sprite specifically.
+reframe. Concretely, `render/` must enforce that every element's per-frame width and height are
+multiples of 5 (validate before render; the overflow/size validators of design §5.2 are the
+natural home), and treat any `-reframed` copy RE2DRender emits as a **validation failure**, not
+a warning.
 
 ### 7. Rack height and panel dimensions are derived from the backdrop PNGs
 RE2DRender reports `Device is 2U rack units` and echoes each panel's backdrop. Placeholder
@@ -198,21 +201,19 @@ guarantee.
 
 ---
 
-## Open / still to confirm
-
-- [ ] **Finding 6 — frame bounds.** Pin the exact "supported" rule (multiples of 5?), then size
-      `knob_tone.png` frames so RE2DRender emits **no `-reframed` copy**. Re-run and confirm the
-      notice is gone.
-- [ ] **Gate C vs. the reframe.** Until frames are at supported bounds, verify the *reframed*
-      knob still registers — sweep it in RE2DPreview and confirm the centre stays pinned
-      (`m0-acceptance-test.md` §5.3). A reframe that pads asymmetrically is a wobble source.
-- [ ] **Gate B (alpha)** — the actual M0 risk: does the Blender-rendered `knob_tone.png` show
-      clean edges (no premultiplied halo) in RE2DPreview? Record the render settings that worked
-      and any explicit un-premultiply step (`m0-acceptance-test.md` §5.2, §6).
-- [ ] Does RE2DRender require `motherboard_def.lua` for a *full* build (vs. the 2D-only render
-      observed here)? Re-check once the pilot's real property set is wired.
-
-## Confirmed so far
+## Confirmed — M0 gates all green
 
 - [x] **Gate A — RE2DRender accepts the device and renders it** (with Findings 1–7 satisfied).
+- [x] **Gate B — alpha is clean**: the Blender-rendered knob shows no premultiplied halo/fringe
+      in RE2DPreview. The design's highest-risk assumption (§10.1) holds.
+- [x] **Gate C — turns smoothly**: the 61-frame sweep min→max shows no wobble and no jumps.
 - [x] Finding 5 — `cable_origin` on `folded_back` is mandatory; `device_name` widgets are not.
+- [x] Finding 6 — supported frame bounds are **multiples of 5**; sizing frames that way stops
+      RE2DRender reframing.
+
+## Beyond M0 — carry into M1
+
+- [ ] Enforce the multiples-of-5 frame-size rule in `render/` so no element is ever reframed by
+      RE2DRender (design §5.2 validators).
+- [ ] Does RE2DRender require `motherboard_def.lua` for a *full* build (vs. the 2D-only render
+      observed here)? Re-check once the pilot's real property set is wired.

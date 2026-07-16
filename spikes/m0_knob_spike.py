@@ -128,14 +128,44 @@ def render_frames(scene):
     return paths
 
 
+# Non-transforming ("data") colorspaces, best first. Blender 4.x's default OCIO
+# config dropped the legacy ``Raw`` name in favour of ``Non-Color``; older
+# configs ship both. M0 runs on whatever Blender the workstation has, so we
+# resolve the name against the config at runtime instead of hardcoding one.
+_DATA_COLORSPACES = ("Non-Color", "Raw", "Generic Data", "data")
+
+
+def _set_data_colorspace(colorspace_settings):
+    """Pin an image to a non-transforming colorspace so Blender neither inverse-
+    transforms on read nor tone-maps on write; stored values pass through as-is.
+
+    Probes this OCIO config's enum and uses the first available name from
+    ``_DATA_COLORSPACES``, so the spike works whether the build calls the data
+    space ``Raw`` (legacy) or ``Non-Color`` (Blender 4.x default). Returns the
+    name chosen so callers can log the finding (docs/m0-acceptance-test.md §6).
+    """
+    available = {
+        item.identifier
+        for item in colorspace_settings.bl_rna.properties["name"].enum_items
+    }
+    for name in _DATA_COLORSPACES:
+        if name in available:
+            colorspace_settings.name = name
+            return name
+    raise RuntimeError(
+        "no non-transforming colorspace found in this OCIO config; tried "
+        f"{_DATA_COLORSPACES}. Available: {', '.join(sorted(available))}"
+    )
+
+
 def _read_raw(path):
     """Load a PNG and return its STORED pixels as top-down (H, W, 4) float RGBA.
 
-    'Raw' colorspace stops Blender inverse-transforming the sRGB values on read;
-    Blender's pixel buffer is bottom-up, so we flip to top-down.
+    A data colorspace stops Blender inverse-transforming the sRGB values on
+    read; Blender's pixel buffer is bottom-up, so we flip to top-down.
     """
     img = bpy.data.images.load(path, check_existing=False)
-    img.colorspace_settings.name = "Raw"
+    _set_data_colorspace(img.colorspace_settings)
     h, w = img.size[1], img.size[0]
     px = np.array(img.pixels[:], dtype=np.float32).reshape(h, w, 4)
     bpy.data.images.remove(img)
@@ -158,7 +188,7 @@ def write_strip(strip):
         NODE, width=FRAME_W, height=FRAME_H * FRAMES, alpha=True
     )
     out.alpha_mode = "STRAIGHT"
-    out.colorspace_settings.name = "Raw"  # values are already display-space
+    _set_data_colorspace(out.colorspace_settings)  # values are already display-space
     out.pixels[:] = strip[::-1].reshape(-1)  # top-down -> Blender bottom-up
     out.file_format = "PNG"
     out.filepath_raw = out_path

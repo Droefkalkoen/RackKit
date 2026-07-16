@@ -5,26 +5,64 @@ GUI art: control states bound to timeline frames, per-element cameras derived
 from registration empties, verified straight-alpha sprite-sheet export, and
 two-way sync with the RE project's ``GUI2D/*.lua`` configuration.
 
-This package must stay importable *outside* Blender: the ``project`` layer
-(Lua reading/writing, palette, manifest) is pure Python and is exercised by
-the test suite without ``bpy``. Anything that needs Blender imports ``bpy``
-lazily inside the modules that use it.
+This package must stay importable *outside* Blender: the ``project``,
+``model`` (minus ``rigs``), and the numpy half of the ``render`` layer are
+pure Python and are exercised by the test suite without ``bpy``. Anything
+that needs Blender imports ``bpy`` lazily inside the modules that use it —
+including everything below, which is why the imports live inside the
+functions.
 """
 
 __version__ = "0.1.0"
 
 
 def register() -> None:
-    """Blender extension entry point.
+    """Blender extension entry point: UI classes plus the schema-migration
+    load handler (§8 — ``.blend`` files outlive add-on versions)."""
+    import bpy
 
-    Operators, panels, and property registration land here as they are
-    implemented (design §8). Kept as a no-op so the extension loads cleanly
-    while only the Blender-independent layers exist.
-    """
+    from . import ui
+
+    ui.register()
+    if _migrate_on_load not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_migrate_on_load)
+    _migrate_all()  # the file already open when the add-on enables
 
 
 def unregister() -> None:
     """Blender extension exit point (mirror of :func:`register`)."""
+    import bpy
+
+    from . import ui
+
+    if _migrate_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_migrate_on_load)
+    ui.unregister()
+
+
+def _migrate_all() -> None:
+    import bpy
+
+    from .model import schema
+
+    for collection in bpy.data.collections:
+        if schema.is_element(collection):
+            try:
+                schema.migrate(collection)
+            except ValueError as exc:
+                print(f"[RE-Blend] {collection.name}: {exc}")
+
+
+def _migrate_on_load(_filepath=None, _none=None) -> None:
+    _migrate_all()
+
+
+try:  # persistent survives file loads; only decoratable inside Blender
+    import bpy.app.handlers
+
+    _migrate_on_load = bpy.app.handlers.persistent(_migrate_on_load)
+except ModuleNotFoundError:
+    pass
 
 
 def cli() -> None:

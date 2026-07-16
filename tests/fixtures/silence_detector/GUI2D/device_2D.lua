@@ -11,12 +11,12 @@ front = {
 	-- threshold knob, 61-frame turntable
 	knob_threshold = {
 		offset = { 950, 120 },
-		{ path = "Knob_63x63_61frames", frames = 61 },
+		{ path = "Knob_65x65_61frames", frames = 61 },
 	},
 
 	SilenceSwitch = {
 		offset = { 1810, 145 },
-		{ path = "Button_51x35_2frames", frames = 2 },
+		{ path = "Button_50x35_2frames", frames = 2 },
 	},
 
 	-- lamp group: two LEDs sharing a group offset
@@ -65,7 +65,7 @@ folded_front = {
 	},
 	OnOffBypass = {
 		offset = { 100, 35 },
-		{ path = "Fader_23x59_3frames", frames = 3 },
+		{ path = "Fader_25x60_3frames", frames = 3 },
 	},
 	DeviceName = {
 		offset = { 660, 50 },

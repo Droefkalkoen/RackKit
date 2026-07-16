@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    # Ships with Blender (§8); a dev dependency here so the render layer's
+    # pure-numpy stitcher/validators are testable in plain CPython.
+    "numpy>=1.24",
 ]
 
 [tool.pytest.ini_options]
@@ -24,4 +27,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.setuptools]
-packages = ["reblend", "reblend.project"]
+packages = [
+    "reblend",
+    "reblend.project",
+    "reblend.model",
+    "reblend.render",
+    "reblend.ui",
+]

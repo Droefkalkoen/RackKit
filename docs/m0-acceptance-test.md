@@ -186,8 +186,10 @@ This is the designed-for risk. In order of likelihood:
 
 1. **Re-transform on read/write.** If the stitcher let Blender apply a colour transform when
    reading frames back or writing the strip, semi-transparent pixels get corrupted. The script
-   sets `colorspace_settings.name = "Raw"` on both to prevent it — verify those lines survived
-   your edits.
+   pins both images to a non-transforming ("data") colorspace via `_set_data_colorspace()` to
+   prevent it — verify those calls survived your edits. The helper resolves the name against the
+   active OCIO config (`Non-Color` on Blender 4.x/5.x defaults, `Raw` on older configs), so it
+   works across builds rather than assuming one name exists.
 2. **Premultiplied save path.** If Blender still writes premultiplied edges, un-premultiply
    explicitly in the stitcher before save: `rgb = rgb / max(alpha, ε)` for partial-alpha
    pixels, clamp to [0,1]. Design §10.1 anticipates exactly this fallback. Capture the finding.

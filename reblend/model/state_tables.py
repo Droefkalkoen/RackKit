@@ -15,7 +15,7 @@ serialise to JSON for storage in the element's ``re_states`` property.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 from . import kinds
@@ -25,13 +25,19 @@ __all__ = [
     "State",
     "StateTable",
     "Key",
+    "Channel",
     "visibility",
     "emission_strength",
     "emission_color",
     "location",
     "shape_key_value",
     "default_state_table",
+    "describe_channel",
 ]
+
+#: A channel identity: ``(id_type, target, data_path, index)`` — what
+#: :meth:`StateAction.key` returns, and what must appear in *every* state.
+Channel = tuple[str, str, str, int]
 
 #: bpy.data collection names an action may target.
 _ID_TYPES = ("objects", "materials")
@@ -169,6 +175,100 @@ class StateTable:
         for state in self.states:
             yield from state.actions
 
+    # -- editing (the "state playground": build a table action by action) ----
+    #
+    # These keep the table *total* by construction — a channel is only ever
+    # added to, removed from, or edited across states as a set — so the panel
+    # can never assemble a table that :meth:`compile` would then reject.
+
+    def channels(self) -> list[Channel]:
+        """Distinct animated channels, in first-seen order across all states."""
+        seen: list[Channel] = []
+        for action in self._all_actions():
+            if action.key() not in seen:
+                seen.append(action.key())
+        return seen
+
+    def controls(self) -> list[list[Channel]]:
+        """Group channels into UI *controls*, one editable unit each.
+
+        The two visibility channels an object gets (``hide_render`` +
+        ``hide_viewport``, kept in lockstep so the viewport preview matches the
+        render) collapse into a single control; every other channel is its own.
+        Order follows :meth:`channels`.
+        """
+        groups: dict[tuple, list[Channel]] = {}
+        order: list[tuple] = []
+        for channel in self.channels():
+            id_type, target, data_path, _index = channel
+            if data_path in ("hide_render", "hide_viewport"):
+                gid: tuple = (id_type, target, "visibility")
+            else:
+                gid = channel
+            if gid not in groups:
+                groups[gid] = []
+                order.append(gid)
+            groups[gid].append(channel)
+        return [groups[gid] for gid in order]
+
+    def add_actions(self, actions: Iterable[StateAction]) -> None:
+        """Add each action as a new channel to *every* state.
+
+        The same action (value included) is appended to all states, so the
+        table stays total; the caller then differentiates per-state values via
+        :meth:`set_value`. Raises :class:`ValueError` if the table has no
+        states to key, or if any channel is already present (adding it twice
+        would double-key the same property).
+        """
+        actions = tuple(actions)
+        if not self.states:
+            raise ValueError("state table has no states to add an action to")
+        existing = set(self.channels())
+        for action in actions:
+            if action.key() in existing:
+                raise ValueError(
+                    f"channel already in the table: {describe_channel(action.key())}"
+                )
+            existing.add(action.key())
+        self.states = [
+            State(state.name, state.actions + actions) for state in self.states
+        ]
+
+    def remove_channel(self, channel: Channel) -> None:
+        """Drop a channel from every state (a no-op if it isn't present)."""
+        self.states = [
+            State(state.name, tuple(a for a in state.actions if a.key() != channel))
+            for state in self.states
+        ]
+
+    def set_value(self, state_index: int, channel: Channel, value: Any) -> None:
+        """Set one state's value for one channel, leaving other states alone.
+
+        Raises :class:`IndexError` for a bad state index and :class:`KeyError`
+        if that state doesn't carry the channel (which would mean the table is
+        no longer total — the edit path never lets that happen).
+        """
+        state = self.states[state_index]
+        if not any(a.key() == channel for a in state.actions):
+            raise KeyError(
+                f"state {state_index} ({state.name!r}) has no channel "
+                f"{describe_channel(channel)}"
+            )
+        self.states[state_index] = State(
+            state.name,
+            tuple(
+                replace(a, value=value) if a.key() == channel else a
+                for a in state.actions
+            ),
+        )
+
+    def value_in(self, state_index: int, channel: Channel) -> Any:
+        """The value a given state assigns to a channel (``None`` if unset)."""
+        for action in self.states[state_index].actions:
+            if action.key() == channel:
+                return action.value
+        return None
+
     # -- persistence (element `re_states` property) --------------------------
 
     def to_json(self) -> str:
@@ -207,6 +307,28 @@ class StateTable:
             )
             states.append(State(name=str(entry.get("name", "")), actions=actions))
         return cls(states=states)
+
+
+def describe_channel(channel: Channel) -> str:
+    """A short human label for a channel, for the panel and error messages.
+
+    Reverses the convenience constructors' data paths back into their
+    vocabulary (visibility / emission / location / shape key) so the UI reads
+    in the designer's terms rather than raw RNA paths.
+    """
+    _id_type, target, data_path, index = channel
+    if data_path in ("hide_render", "hide_viewport"):
+        return f"{target}: visibility"
+    if 'inputs["Strength"]' in data_path:
+        return f"{target}: emission strength"
+    if 'inputs["Color"]' in data_path:
+        return f"{target}: emission colour"
+    if data_path == "location":
+        return f"{target}: location {'XYZ'[index] if 0 <= index < 3 else index}"
+    if "shape_keys" in data_path:
+        name = data_path.partition('key_blocks["')[2].partition('"]')[0]
+        return f"{target}: shape key '{name}'"
+    return f"{target}: {data_path}"
 
 
 #: Default state names per kind. The designer fills in the actions; the

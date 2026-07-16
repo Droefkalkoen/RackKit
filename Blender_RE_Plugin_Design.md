@@ -175,6 +175,11 @@ The **Render Elements** operator, for each selected (or all, or dirty-only) elem
 
 1. Isolate: only that element's collection (plus a per-element optional "context"
    collection, excluded from the render, usable for light-catching geometry) is visible.
+   The other RE Element collections are removed from the visible image, but *how* is a
+   user setting: by default they stay in the render as **shadow-only casters** (Cycles ray
+   visibility — invisible to the camera, still shadowing the active element, catching
+   nothing), so neighbouring geometry keeps grounding the active control; alternatively
+   they are **hidden** outright (engine-agnostic) so the element renders wholly alone.
 2. Configure: element camera, `re_frame_w × re_frame_h` resolution, transparent film,
    straight-alpha PNG output, 8-bit, sRGB.
 3. Render frames `0 … re_frames − 1`.

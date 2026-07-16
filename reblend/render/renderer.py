@@ -49,17 +49,32 @@ class RenderResult:
         return all(f.severity != ERROR for f in self.findings)
 
 
+#: How the elements that are *not* being rendered behave during a render
+#: (§5.1 isolation). ``SHADOW`` keeps them in the render as shadow-only casters
+#: (invisible to the camera, still shadowing the active element, catching
+#: nothing) via Cycles object ray visibility; ``HIDDEN`` excludes them from the
+#: render entirely and is engine-agnostic.
+INACTIVE_SHADOW = "SHADOW"
+INACTIVE_HIDDEN = "HIDDEN"
+
+
 def render_elements(
     scene: "bpy.types.Scene",
     collections: list["bpy.types.Collection"],
     out_dir: Path | str,
     ppb: float = calibration.DEFAULT_PPB,
+    inactive_render: str = INACTIVE_SHADOW,
 ) -> list[RenderResult]:
     """Render several elements' sheets; one element's failure stops nobody else."""
     results = []
     for collection in collections:
         try:
-            results.append(render_element(scene, collection, out_dir, ppb=ppb))
+            results.append(
+                render_element(
+                    scene, collection, out_dir, ppb=ppb,
+                    inactive_render=inactive_render,
+                )
+            )
         except RenderError as exc:
             results.append(
                 RenderResult(
@@ -75,6 +90,7 @@ def render_element(
     collection: "bpy.types.Collection",
     out_dir: Path | str,
     ppb: float = calibration.DEFAULT_PPB,
+    inactive_render: str = INACTIVE_SHADOW,
 ) -> RenderResult:
     """Render one element collection to ``<out_dir>/<re_path>.png``."""
     data = schema.props_to_data(collection)
@@ -90,7 +106,7 @@ def render_element(
     registration = _find_registration(collection)
     result = RenderResult(element=data.path)
 
-    with _element_scene_state(scene, collection):
+    with _element_scene_state(scene, collection, inactive_render):
         camera = _make_camera(scene, data, registration, ppb)
         try:
             _configure_render(scene, data)
@@ -126,10 +142,31 @@ _RENDER_ATTRS = (
 _IMAGE_ATTRS = ("file_format", "color_mode", "color_depth")
 _VIEW_ATTRS = ("view_transform", "look", "exposure", "gamma")
 
+#: Object ray-visibility flags a shadow-only caster must *drop* (§5.1): it
+#: contributes nothing to the camera image or to indirect light, so it neither
+#: shows up nor catches shadows — only ``visible_shadow`` is kept on.
+_SHADOW_ONLY_OFF = (
+    "visible_camera",
+    "visible_diffuse",
+    "visible_glossy",
+    "visible_transmission",
+    "visible_volume_scatter",
+)
+_RAY_ATTRS = _SHADOW_ONLY_OFF + ("visible_shadow",)
+
 
 @contextlib.contextmanager
-def _element_scene_state(scene, active_collection):
-    """Push everything the render touches; pop it however rendering ends."""
+def _element_scene_state(scene, active_collection, inactive_render="SHADOW"):
+    """Push everything the render touches; pop it however rendering ends.
+
+    The other RE Element collections are taken out of the visible image so
+    only the active element renders. ``inactive_render`` chooses how:
+
+    - ``"SHADOW"`` (default): they stay in the render but every object becomes
+      a shadow-only caster — invisible to the camera, still casting shadows on
+      the active element, catching none itself.
+    - ``"HIDDEN"``: they are excluded from the render outright.
+    """
     saved_render = {a: getattr(scene.render, a) for a in _RENDER_ATTRS}
     saved_image = {a: getattr(scene.render.image_settings, a) for a in _IMAGE_ATTRS}
     saved_view = {a: getattr(scene.view_settings, a) for a in _VIEW_ATTRS}
@@ -139,15 +176,33 @@ def _element_scene_state(scene, active_collection):
 
     siblings = _element_collections(scene)
     saved_hide = {c.name: c.hide_render for c in siblings}
+    saved_vis: dict[str, dict[str, bool]] = {}
     try:
         for c in siblings:
             visible = c is active_collection or _is_context_of(c, active_collection)
-            c.hide_render = not visible
+            if visible:
+                c.hide_render = False
+            elif inactive_render == "HIDDEN":
+                c.hide_render = True
+            else:  # SHADOW: keep the geometry in the render, shadow-only.
+                c.hide_render = False
+                for obj in c.all_objects:
+                    if obj.name in saved_vis:
+                        continue
+                    saved_vis[obj.name] = {a: getattr(obj, a) for a in _RAY_ATTRS}
+                    for attr in _SHADOW_ONLY_OFF:
+                        setattr(obj, attr, False)
+                    obj.visible_shadow = True
         yield
     finally:
         for c in siblings:
             if c.name in saved_hide:
                 c.hide_render = saved_hide[c.name]
+        for name, attrs in saved_vis.items():
+            obj = bpy.data.objects.get(name)
+            if obj is not None:
+                for attr, value in attrs.items():
+                    setattr(obj, attr, value)
         for attr, value in saved_render.items():
             setattr(scene.render, attr, value)
         for attr, value in saved_image.items():

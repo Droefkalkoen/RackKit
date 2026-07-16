@@ -54,6 +54,21 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
         default=0,
         min=0,
     )
+    inactive_render: bpy.props.EnumProperty(
+        name="Inactive Elements",
+        description="How the other RE Elements behave while one element is "
+                    "rendered (§5.1). Shadow-only keeps neighbouring geometry "
+                    "shadowing the active element without appearing in its sheet",
+        items=(
+            ("SHADOW", "Cast Shadows",
+             "Invisible to the camera but still cast shadows on the active "
+             "element (and catch none themselves) — the default (Cycles ray "
+             "visibility)"),
+            ("HIDDEN", "Hidden",
+             "Excluded from the render entirely; the active element renders alone"),
+        ),
+        default="SHADOW",
+    )
     findings: bpy.props.CollectionProperty(type=REBLEND_PG_finding)
     findings_index: bpy.props.IntProperty(default=0)
 

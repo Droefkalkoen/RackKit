@@ -20,8 +20,11 @@ Implementation has started with the Blender-independent layers. Repository conte
   `model/rigs.py`, `render/bpy_io.py`, `render/renderer.py`, and `ui/*` import `bpy` (lazily
   via `reblend.register()`); everything else is pure Python under test.
 - `tests/` — pytest suite with SDK-convention fixtures under `tests/fixtures/`.
-- `blender_manifest.toml` — Blender 4.2 LTS+ extension manifest; `pyproject.toml` is dev
-  tooling only (RE-Blend is never pip-installed into Blender).
+- `reblend/blender_manifest.toml` — Blender 4.2 LTS+ extension manifest; it lives *inside*
+  the package beside `reblend/__init__.py` because Blender's extension system requires the
+  manifest at the root of the extension source (build with
+  `blender --command extension build --source-dir reblend`). `pyproject.toml` is dev tooling
+  only (RE-Blend is never pip-installed into Blender). See `docs/install.md`.
 - `SDK_v4.6.0/` — a local, read-only copy of the Reason Rack Extension (Jukebox) SDK,
   kept on disk as reference material (the example devices are *not* included). RE-Blend
   reads/writes the *user's* RE project files; it does not bundle or link this SDK. Do not

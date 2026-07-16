@@ -8,6 +8,12 @@ This is the test procedure for the **M0 spike** (see [`ROADMAP.md`](../ROADMAP.m
 > RE2DPreview**. *Smoothly* means **no wobble and no jumps** — the two failure modes this
 > milestone exists to kill.
 
+> **✅ PASSED.** All three gates are green against RE2DRender 2.0.11b258: the knob is accepted,
+> shows clean straight-alpha edges, and sweeps with no wobble and no jumps. The findings —
+> including the RE2DRender input contract and the **multiples-of-5 frame-size rule** — are in
+> [`findings-m0.md`](findings-m0.md). This document stays as the reusable procedure for the
+> next element.
+
 M0 is a spike, not a feature. There is no UI, no import, no schema. You hand-tag one knob,
 render it, stitch it, and put the result in front of the two SDK tools that have final say.
 The riskiest assumption in the whole design — that Blender can emit a **straight-alpha** PNG
@@ -231,14 +237,15 @@ reproduce these settings exactly, not rediscover them.
 
 ## 7. Done checklist
 
-- [ ] Pilot scene has `reg_knob_threshold` empty on the axis and a `knob_threshold_rotor` with
+- [x] Pilot scene has `reg_knob_threshold` empty on the axis and a `knob_threshold_rotor` with
       its origin on that axis.
-- [ ] `spikes/m0_knob_spike.py` parameters match the pilot's `device_2D.lua` (name, frames, W×H).
-- [ ] Script runs and writes `GUI2D/<node>.png` at exactly `frameW × (frameH × frames)`.
-- [ ] **Gate A:** RE2DRender builds the device with the sprite at the right size, no errors.
-- [ ] **Gate B:** RE2DPreview shows clean knob edges — no dark halo.
-- [ ] **Gate C:** the knob sweeps min→max with no wobble and no jumps.
-- [ ] Findings captured in `docs/findings-m0.md`.
+- [x] `spikes/m0_knob_spike.py` parameters match the pilot's `device_2D.lua` (name, frames, W×H).
+- [x] Script runs and writes `GUI2D/<node>.png` at exactly `frameW × (frameH × frames)`, with
+      `frameW`/`frameH` **divisible by 5** so RE2DRender does not reframe it.
+- [x] **Gate A:** RE2DRender builds the device with the sprite at the right size, no errors.
+- [x] **Gate B:** RE2DPreview shows clean knob edges — no dark halo.
+- [x] **Gate C:** the knob sweeps min→max with no wobble and no jumps.
+- [x] Findings captured in `docs/findings-m0.md`.
 
 When every box is ticked, the riskiest assumption is retired and M1 (read-only import + the real
 render module for *all* element kinds) is cleared to start.

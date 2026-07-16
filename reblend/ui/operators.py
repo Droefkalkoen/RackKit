@@ -115,8 +115,16 @@ class REBLEND_OT_import_project(bpy.types.Operator):
 
     def _origin_offset(self, link: ProjectLink, settings, panel: str
                        ) -> tuple[float, float]:
-        """The world-origin pixel offset for one panel (§4.4)."""
-        size = self._panel_size(link, panel, settings.rack_units)
+        """The world-origin pixel offset for one panel (§4.4).
+
+        Derived from the *canonical* SDK panel geometry — width is always
+        PANEL_WIDTH_PX and height comes from the rack-unit setting (or the
+        folded height) — never from a probed element's size. A backdrop sheet
+        that is missing or mis-authored must not drag the centre off; the whole
+        workspace centres on the same rack-height-derived origin regardless of
+        whether any one element happens to be sized correctly (§4.4).
+        """
+        size = calibration.panel_size_px(panel, settings.rack_units)
         return calibration.origin_offset_px(settings.origin, size.width,
                                             size.height)
 
@@ -278,7 +286,10 @@ class REBLEND_OT_import_project(bpy.types.Operator):
             existing = bpy.data.objects.get(name)
             if existing is not None and not reposition:
                 continue
-            size = self._panel_size(link, panel, settings.rack_units)
+            # Canonical SDK panel geometry (rack height + PANEL_WIDTH_PX), so
+            # the guide rect and its centre match every element placed on it —
+            # a mis-sized backdrop must not warp the outline (§4.4).
+            size = calibration.panel_size_px(panel, settings.rack_units)
             origin = calibration.origin_offset_px(settings.origin, size.width,
                                                   size.height)
             corners_px = ((0, 0), (size.width, 0),
@@ -297,13 +308,6 @@ class REBLEND_OT_import_project(bpy.types.Operator):
             obj.hide_render = True
             obj.hide_select = True
             self._panel_root(context, panel).objects.link(obj)
-
-    def _panel_size(self, link: ProjectLink, panel: str,
-                    rack_units: int) -> calibration.PanelSize:
-        for spec in link.specs:
-            if spec.kind == kinds.BACKDROP and panel in spec.panels and spec.frame_w:
-                return calibration.PanelSize(spec.frame_w, spec.frame_h)
-        return calibration.panel_size_px(panel, rack_units)
 
 
 class REBLEND_OT_validate(bpy.types.Operator):

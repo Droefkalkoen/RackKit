@@ -11,6 +11,15 @@ on it): the panel lies in the world X/Z plane facing −Y — Blender's front
 orthographic view. Panel pixel (0, 0) (top-left) sits at the world origin,
 +x panel px runs along +X, +y panel px (downward) runs along −Z. Cameras look
 along +Y at the panel from −Y.
+
+The *world origin* — which panel pixel the world's (0, 0) lands on — is a
+placement convenience, not part of the RE contract: ``re_offset_*`` and the
+Lua stay top-left panel pixels regardless. The origin only shifts where the
+guides and registration empties sit in Blender, so a designer can model a
+device around its centre (``ORIGIN_CENTER``) or its top-centre
+(``ORIGIN_TOP_CENTER``) instead of the native top-left corner
+(``ORIGIN_TOP_LEFT``). Pass the pixel offset from :func:`origin_offset_px`
+into :func:`panel_px_to_world` / :func:`world_to_panel_px`.
 """
 
 from __future__ import annotations
@@ -30,10 +39,23 @@ __all__ = [
     "is_folded",
     "ortho_scale",
     "dominant_axis",
+    "ORIGIN_TOP_LEFT",
+    "ORIGIN_TOP_CENTER",
+    "ORIGIN_CENTER",
+    "ORIGINS",
+    "origin_offset_px",
     "panel_px_to_world",
     "world_to_panel_px",
     "element_center_px",
 ]
+
+#: World-origin modes: which panel pixel the world (0, 0) lands on. Top-left is
+#: the native RE panel-pixel convention; the other two recentre the device in
+#: Blender for symmetric modelling without changing anything RE sees.
+ORIGIN_TOP_LEFT = "top_left"
+ORIGIN_TOP_CENTER = "top_center"
+ORIGIN_CENTER = "center"
+ORIGINS = (ORIGIN_TOP_LEFT, ORIGIN_TOP_CENTER, ORIGIN_CENTER)
 
 #: The SDK's hi-res panel world (design §1): panels are 3770 px wide, 345 px
 #: per rack unit tall, 130 px folded — confirmed against RE2DRender, which
@@ -109,18 +131,41 @@ def dominant_axis(axis: tuple[float, float, float]) -> tuple[int, float]:
     return index, (1.0 if axis[index] >= 0.0 else -1.0)
 
 
+def origin_offset_px(
+    origin: str, panel_width: float, panel_height: float
+) -> tuple[float, float]:
+    """Panel-pixel offset of the chosen world origin from the top-left corner.
+
+    Subtracted from a panel pixel before it is converted to world space, so
+    ``ORIGIN_CENTER`` puts world (0, 0) at the panel centre and
+    ``ORIGIN_TOP_CENTER`` at the middle of the top edge. Any unknown mode (and
+    ``ORIGIN_TOP_LEFT``) is the identity offset.
+    """
+    if origin == ORIGIN_CENTER:
+        return (panel_width / 2.0, panel_height / 2.0)
+    if origin == ORIGIN_TOP_CENTER:
+        return (panel_width / 2.0, 0.0)
+    return (0.0, 0.0)
+
+
 def panel_px_to_world(
-    x: float, y: float, ppb: float = DEFAULT_PPB
+    x: float, y: float, ppb: float = DEFAULT_PPB,
+    origin: tuple[float, float] = (0.0, 0.0),
 ) -> tuple[float, float, float]:
-    """Panel pixel (top-left origin, +y down) → world XYZ on the panel plane."""
-    return (x / ppb, 0.0, -y / ppb)
+    """Panel pixel (top-left origin, +y down) → world XYZ on the panel plane.
+
+    ``origin`` is a panel-pixel offset (see :func:`origin_offset_px`) folded in
+    so world (0, 0) can sit somewhere other than the panel's top-left corner.
+    """
+    return ((x - origin[0]) / ppb, 0.0, -(y - origin[1]) / ppb)
 
 
 def world_to_panel_px(
-    location: tuple[float, float, float], ppb: float = DEFAULT_PPB
+    location: tuple[float, float, float], ppb: float = DEFAULT_PPB,
+    origin: tuple[float, float] = (0.0, 0.0),
 ) -> tuple[float, float]:
     """World XYZ → panel pixel (inverse of :func:`panel_px_to_world`)."""
-    return (location[0] * ppb, -location[2] * ppb)
+    return (location[0] * ppb + origin[0], -location[2] * ppb + origin[1])
 
 
 def element_center_px(

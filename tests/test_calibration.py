@@ -43,6 +43,26 @@ def test_world_roundtrip():
     assert cal.world_to_panel_px(world, ppb=100.0) == pytest.approx((950, 120))
 
 
+def test_origin_offset_modes():
+    # top-left is the identity; centre/top-centre shift by half the panel
+    assert cal.origin_offset_px(cal.ORIGIN_TOP_LEFT, 3770, 690) == (0.0, 0.0)
+    assert cal.origin_offset_px(cal.ORIGIN_TOP_CENTER, 3770, 690) == (1885.0, 0.0)
+    assert cal.origin_offset_px(cal.ORIGIN_CENTER, 3770, 690) == (1885.0, 345.0)
+    # unknown mode degrades to the identity offset
+    assert cal.origin_offset_px("nonsense", 3770, 690) == (0.0, 0.0)
+
+
+def test_world_origin_shifts_placement():
+    # the panel centre maps to the world origin under ORIGIN_CENTER
+    origin = cal.origin_offset_px(cal.ORIGIN_CENTER, 3770, 690)
+    assert cal.panel_px_to_world(1885, 345, ppb=100.0, origin=origin) == \
+        pytest.approx((0.0, 0.0, 0.0))
+    # and the round trip still recovers the original panel pixel
+    world = cal.panel_px_to_world(950, 120, ppb=100.0, origin=origin)
+    assert cal.world_to_panel_px(world, ppb=100.0, origin=origin) == \
+        pytest.approx((950, 120))
+
+
 def test_dominant_axis():
     assert cal.dominant_axis((0.0, -1.0, 0.0)) == (1, -1.0)
     assert cal.dominant_axis((0.0, 0.1, 0.9)) == (2, 1.0)

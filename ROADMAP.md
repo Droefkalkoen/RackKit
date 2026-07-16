@@ -119,6 +119,18 @@ much I'd want them:
 - **0.5× preview toggle** in the panel compositor (§10.3). Fine grain and knurl detail alias
   when RE2DRender downscales; seeing the half-size result *before* export would catch it at the
   material-tuning stage. Cheap to build, disproportionately useful.
+- **Auto frame-size from a rendered matte.** Frame size is the one number the RE Lua never
+  carries (§5.2), so today the designer sets it by hand. Instead: render the active element's
+  alpha matte (or every element's, in bulk), measure the tight bounding box of the non-zero
+  alpha, and set `re_frame_w`/`re_frame_h` from it — rounding each dimension *up to the next
+  multiple of 5* (breathing room, and it keeps the sheet on tidy pixel steps). Two thoroughness
+  modes: **current frame only** (fast — one matte, assumes the widest frame is on screen) and
+  **all frames** (render every frame `0…N−1`, union the per-frame boxes, so a knob whose pointer
+  sweeps outside frame 0's silhouette or a fader whose handle travels still gets a box that
+  contains every state). The matte render reuses the per-element camera and straight-alpha path
+  the renderer already sets up, so this is measurement on top of existing machinery — no new
+  export surface. Pairs naturally with the frame-size warning the validator already raises: this
+  is the "just compute it for me" answer to that nag.
 - **Render-manifest diffing in CI**: compare the manifest against the last committed one and
   fail (or comment on the PR) when a sheet changed that shouldn't have. The manifest exists
   from M3; this is a small script on top that turns it into an art-regression gate.

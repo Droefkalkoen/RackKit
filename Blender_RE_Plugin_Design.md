@@ -166,6 +166,14 @@ provides:
 - Panel-unit helpers: snap increments in panel px, a HUD readout of the selected
   element's position in panel coordinates, and optional guide bands for whatever layout
   zones the project's own design defines.
+- A **world-origin** selector — top-left of the device (the native RE panel-pixel
+  convention), top-centre, or centre — choosing which panel pixel the Blender world
+  origin lands on. This is a modelling convenience only: `re_offset_*` and the Lua stay
+  top-left panel pixels, and switching origins just shifts where guides and registration
+  empties sit in Blender. **Re-import & Reposition** re-reads the project read-only and
+  snaps every already-placed element's registration empty and guide boxes onto the
+  current scale and origin, so a calibration change (or an upstream layout edit) can be
+  re-applied in one click instead of re-importing into an empty scene.
 
 ## 5. Rendering engine
 

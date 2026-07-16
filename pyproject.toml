@@ -1,7 +1,8 @@
 # Development tooling only. RE-Blend is not pip-installed into Blender — it is
-# packaged as a Blender extension via blender_manifest.toml. This file exists so
-# the Blender-independent layers (reblend/project/…) can be developed and tested
-# with plain CPython.
+# packaged as a Blender extension via reblend/blender_manifest.toml (the manifest
+# lives beside reblend/__init__.py, as Blender's extension system requires). This
+# file exists so the Blender-independent layers (reblend/project/…) can be
+# developed and tested with plain CPython.
 
 [project]
 name = "re-blend"

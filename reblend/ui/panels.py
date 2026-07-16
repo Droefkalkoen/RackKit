@@ -51,6 +51,9 @@ class REBLEND_PT_project(bpy.types.Panel):
         layout.separator()
         layout.operator("reblend.validate", icon="CHECKMARK")
         layout.prop(settings, "inactive_render")
+        if (settings.inactive_render == "SHADOW"
+                and context.scene.render.engine != "CYCLES"):
+            layout.label(text="Cast Shadows needs Cycles", icon="ERROR")
         col = layout.column(align=True)
         col.operator("reblend.render_elements", text="Render All",
                      icon="RENDER_ANIMATION").scope = "ALL"

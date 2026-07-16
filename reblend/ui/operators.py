@@ -318,11 +318,18 @@ class REBLEND_OT_render_elements(bpy.types.Operator):
         props.store_report(settings, findings)
 
         failed = [r.element for r in results if not r.ok]
+        warnings = sum(1 for f in findings if f.severity != validation.ERROR)
         if failed:
             self.report(
                 {"ERROR"},
                 f"rendered {len(results) - len(failed)}/{len(results)} sheets; "
                 f"failed: {', '.join(failed)} — see the RE panel",
+            )
+        elif warnings:
+            self.report(
+                {"WARNING"},
+                f"rendered {len(results)} sheet(s); {warnings} warning(s) "
+                "— see the RE panel",
             )
         else:
             self.report({"INFO"}, f"rendered {len(results)} sheet(s) into {out_dir}")

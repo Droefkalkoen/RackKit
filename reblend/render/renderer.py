@@ -57,6 +57,39 @@ class RenderResult:
 INACTIVE_SHADOW = "SHADOW"
 INACTIVE_HIDDEN = "HIDDEN"
 
+#: The only engine whose object ray visibility makes shadow-only isolation work.
+CYCLES_ENGINE = "CYCLES"
+
+
+def _warn_shadow_engine(result, scene, collection, data, inactive_render) -> None:
+    """Warn if shadow-only isolation was asked for under a non-Cycles engine.
+
+    ``SHADOW`` mode makes the other elements invisible-to-camera via Cycles
+    object ray visibility (§5.1); under EEVEE/Workbench those flags are ignored,
+    so the siblings would render *visible* and pollute the sheet. Only warn when
+    the choice actually bites — i.e. there is at least one other element to
+    isolate — so a single-element scene stays quiet.
+    """
+    if inactive_render != INACTIVE_SHADOW or scene.render.engine == CYCLES_ENGINE:
+        return
+    others = [
+        c
+        for c in _element_collections(scene)
+        if c is not collection and not _is_context_of(c, collection)
+    ]
+    if not others:
+        return
+    result.findings.append(
+        Finding(
+            WARNING,
+            "engine",
+            f"'Cast Shadows' isolation needs Cycles, but the render engine is "
+            f"'{scene.render.engine}' — the other elements will render visible "
+            "instead of shadow-only. Switch to Cycles, or use 'Hidden' isolation.",
+            subject=data.path,
+        )
+    )
+
 
 def render_elements(
     scene: "bpy.types.Scene",
@@ -105,6 +138,7 @@ def render_element(
 
     registration = _find_registration(collection)
     result = RenderResult(element=data.path)
+    _warn_shadow_engine(result, scene, collection, data, inactive_render)
 
     with _element_scene_state(scene, collection, inactive_render):
         camera = _make_camera(scene, data, registration, ppb)

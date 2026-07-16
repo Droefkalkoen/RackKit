@@ -22,12 +22,24 @@ Requires numpy (ships with Blender). No other external image dependency.
 
 from __future__ import annotations
 
-import math
 import os
+import sys
 
 import bpy
 import numpy as np
 from mathutils import Vector
+
+
+def _log(msg):
+    """Emit a status line.
+
+    Blender's embedded interpreter block-buffers ``stdout`` in the GUI, so
+    ``print()`` output never surfaces in the system console during a
+    ``text.run_script`` run; tracebacks appear only because they go to
+    ``stderr``. Route our status lines the same way, with an explicit flush, so
+    they show up alongside any error.
+    """
+    print(msg, file=sys.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # PARAMETERS — read the real values from the pilot's GUI2D/device_2D.lua.
@@ -77,20 +89,36 @@ def calibrate_camera(scene):
     return cam
 
 
+def _axis_euler_index(axis):
+    """Map a KNOB_AXIS vector to a ``rotation_euler`` component and a sign.
+
+    The knob spins around whichever axis dominates ``KNOB_AXIS`` (X=0, Y=1,
+    Z=2); a negative dominant component flips the sweep direction so min->max
+    still runs the way the axis points. ``rotation_euler`` is the rotor's
+    *local* frame, which equals world for an un-rotated rotor (the pilot case).
+    """
+    comps = (abs(axis.x), abs(axis.y), abs(axis.z))
+    index = comps.index(max(comps))
+    sign = 1.0 if axis[index] >= 0.0 else -1.0
+    return index, sign
+
+
 def build_turntable_driver():
     """Rotation driver on the rotor: frame 0 -> min, frame FRAMES-1 -> max (§4.3).
 
     Linear; regenerated whenever FRAMES changes so the rig can never diverge
-    from the frame count baked into the sheet.
+    from the frame count baked into the sheet. Spins around the KNOB_AXIS
+    component so the driven axis matches the one the camera looks down.
     """
     rotor = bpy.data.objects[ROTOR]
     rotor.rotation_mode = "XYZ"
     rotor.driver_remove("rotation_euler")
-    fcurve = rotor.driver_add("rotation_euler", 2)  # index 2 = local Z
+    index, sign = _axis_euler_index(KNOB_AXIS)
+    fcurve = rotor.driver_add("rotation_euler", index)
     drv = fcurve.driver
     drv.type = "SCRIPTED"
     half = SWEEP_DEG / 2.0
-    drv.expression = f"radians(-{half} + {SWEEP_DEG} * frame / {FRAMES - 1})"
+    drv.expression = f"radians({sign} * (-{half} + {SWEEP_DEG} * frame / {FRAMES - 1}))"
 
 
 def configure_render(scene):
@@ -225,9 +253,9 @@ def main():
     paths = render_frames(scene)
     strip = stitch(paths)
     out_path = write_strip(strip)
-    print(f"[M0] wrote {out_path}  ({FRAME_W} x {FRAME_H * FRAMES}, {FRAMES} frames)")
-    print(f"[M0] alpha check: {verify_straight_alpha(out_path)}")
-    print("[M0] now run RE2DRender on the project and RE2DPreview to judge it.")
+    _log(f"[M0] wrote {out_path}  ({FRAME_W} x {FRAME_H * FRAMES}, {FRAMES} frames)")
+    _log(f"[M0] alpha check: {verify_straight_alpha(out_path)}")
+    _log("[M0] now run RE2DRender on the project and RE2DPreview to judge it.")
 
 
 if __name__ == "__main__":

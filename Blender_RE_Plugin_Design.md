@@ -171,9 +171,11 @@ provides:
   origin lands on. This is a modelling convenience only: `re_offset_*` and the Lua stay
   top-left panel pixels, and switching origins just shifts where guides and registration
   empties sit in Blender. **Re-import & Reposition** re-reads the project read-only and
-  snaps every already-placed element's registration empty and guide boxes onto the
-  current scale and origin, so a calibration change (or an upstream layout edit) can be
-  re-applied in one click instead of re-importing into an empty scene.
+  snaps every already-placed element onto the current scale and origin — the whole
+  element travels (its registration empty is the anchor, and its modelled geometry is
+  shifted by the same world delta so it stays registered), so a calibration change (or an
+  upstream layout edit) can be re-applied in one click instead of re-importing into an
+  empty scene.
 
 ## 5. Rendering engine
 

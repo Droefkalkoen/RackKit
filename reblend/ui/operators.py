@@ -148,18 +148,41 @@ class REBLEND_OT_import_project(bpy.types.Operator):
 
         Re-import keeps the registration empty (it is user-owned calibration),
         so a plain re-read never moves anything. Reposition deliberately snaps
-        the registration empty and rebuilds the guide boxes from the freshly
-        read placements, the current Pixels/Unit and the current World Origin.
+        the element onto the freshly read placement, the current Pixels/Unit
+        and the current World Origin.
+
+        The whole element travels, not just its guides: the registration empty
+        is the anchor, so the element's *modelled* geometry (backdrop plane,
+        control meshes) is shifted by the same world delta the empty moves,
+        keeping it registered to the empty. The guide boxes are rebuilt at the
+        new absolute coordinates.
         """
         empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
         if empty is not None and spec.placements:
             primary = spec.placements[0]
             origin = self._origin_offset(link, settings, primary.panel)
             cx, cy = self._center_px(spec, primary)
-            empty.location = Vector(
+            target = Vector(
                 calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
+            self._translate_element(collection, target - empty.location)
         self._clear_guide_boxes(collection)
         self._guide_boxes(collection, spec, link, settings)
+
+    @staticmethod
+    def _translate_element(collection, delta: Vector) -> None:
+        """Shift the element's objects by ``delta`` in world space.
+
+        Only top-level (parentless) objects are moved directly — parented
+        children ride their parent, so a rotor parented to the registration
+        empty follows it without being double-moved. Guide boxes are skipped
+        because reposition rebuilds them from scratch at the new coordinates.
+        """
+        if delta.length == 0.0:
+            return
+        for obj in collection.objects:
+            if obj.parent is not None or obj.get("re_guide") == "box":
+                continue
+            obj.location = obj.location + delta
 
     def _panel_root(self, context, panel: str) -> bpy.types.Collection:
         name = PANEL_ROOTS[panel]

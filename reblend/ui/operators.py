@@ -222,6 +222,58 @@ class REBLEND_OT_validate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class REBLEND_OT_set_frame_size(bpy.types.Operator):
+    """Fill in per-frame pixel size, which the RE Lua never carries (§5.2).
+
+    Frame size is the designer's choice (or read from existing art at import),
+    so a fresh import lands with every element unsized and the validator flags
+    one ``frame-size`` warning per element. This applies the panel's Width and
+    Height in bulk so the whole set can be cleared at once, or to just the
+    active element. ``MISSING`` never clobbers a size already set (a probed or
+    hand-picked one); ``ACTIVE`` overwrites the active element deliberately.
+    """
+
+    bl_idname = "reblend.set_frame_size"
+    bl_label = "Set Frame Size"
+    bl_options = {"REGISTER", "UNDO"}
+
+    scope: bpy.props.EnumProperty(
+        name="Scope",
+        items=(
+            ("MISSING", "Missing", "Every element that has no frame size yet"),
+            ("ACTIVE", "Active", "Only the active collection's element"),
+        ),
+        default="MISSING",
+    )
+
+    def execute(self, context):
+        settings = _settings(context)
+        w, h = int(settings.frame_w), int(settings.frame_h)
+        if w <= 0 or h <= 0:
+            self.report({"ERROR"}, "set a positive Frame W and Frame H first")
+            return {"CANCELLED"}
+
+        if self.scope == "ACTIVE":
+            active = context.collection
+            if active is None or not schema.is_element(active):
+                self.report({"ERROR"}, "active collection is not an RE Element")
+                return {"CANCELLED"}
+            targets = [active]
+        else:
+            targets = [c for c in _element_collections()
+                       if not schema.props_to_data(c).has_frame_size]
+
+        for collection in targets:
+            collection["re_frame_w"] = w
+            collection["re_frame_h"] = h
+
+        if not targets:
+            self.report({"INFO"}, "no elements needed a frame size")
+        else:
+            self.report({"INFO"}, f"set {w}x{h}px on {len(targets)} element(s)")
+        return {"FINISHED"}
+
+
 class REBLEND_OT_render_elements(bpy.types.Operator):
     """Batch-render element sheets into the linked project's GUI2D (§5.1)."""
 
@@ -362,6 +414,7 @@ class REBLEND_OT_generate_rig(bpy.types.Operator):
 CLASSES = (
     REBLEND_OT_import_project,
     REBLEND_OT_validate,
+    REBLEND_OT_set_frame_size,
     REBLEND_OT_render_elements,
     REBLEND_OT_generate_rig,
 )

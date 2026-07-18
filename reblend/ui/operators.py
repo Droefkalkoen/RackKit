@@ -9,16 +9,21 @@ materialise the results into the scene and report.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import subprocess
+import tempfile
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
 
 from ..model import calibration, kinds, rigs, schema, state_tables
-from ..project import validation
+from ..project import lua_writer, merge, validation
 from ..project.link import ElementSpec, ProjectLink, load_project
 from ..project.lua_reader import LuaConfigError
-from ..render import renderer
+from ..project.lua_writer import PatchError
+from ..render import bpy_io, compositor, renderer, stitcher
 from . import props
 
 #: Root collection name per panel (§4.2).
@@ -64,6 +69,214 @@ def _collection_by_path(path: str) -> bpy.types.Collection | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# import materialisation (§6.1)
+# ---------------------------------------------------------------------------
+#
+# Module-level so Sync's per-item accept-theirs (§6.1) applies a spec through
+# exactly the same path a full import does — one materialisation, two doors.
+
+
+def _origin_offset(settings, panel: str) -> tuple[float, float]:
+    """The world-origin pixel offset for one panel (§4.4).
+
+    Derived from the *canonical* SDK panel geometry — width is always
+    PANEL_WIDTH_PX and height comes from the rack-unit setting (or the
+    folded height) — never from a probed element's size. A backdrop sheet
+    that is missing or mis-authored must not drag the centre off; the whole
+    workspace centres on the same rack-height-derived origin regardless of
+    whether any one element happens to be sized correctly (§4.4).
+    """
+    size = calibration.panel_size_px(panel, settings.rack_units)
+    return calibration.origin_offset_px(settings.origin, size.width, size.height)
+
+
+def _materialise(context, spec: ElementSpec, settings, reposition: bool) -> bool:
+    """Create or update one element collection from a spec; True when new."""
+    collection = _collection_by_path(spec.path)
+    is_new = collection is None
+    if is_new:
+        collection = bpy.data.collections.new(spec.path)
+
+    # Fill/update the Lua-derived properties. User-owned properties
+    # (sweep, states, registration, preview frame) keep their existing values
+    # on update, and a frame size the user already chose is never clobbered
+    # by "unknown". A kept key that is *absent* still gets its default:
+    # data_to_props stamps the current re_schema, so every versioned property
+    # must exist afterwards or the migration that would add it never runs.
+    keep = set()
+    if not is_new:
+        keep = {"re_sweep_deg", "re_states", "re_registration", "re_preview_frame"}
+        if spec.frame_w == 0:
+            keep |= {"re_frame_w", "re_frame_h"}
+    for key, value in schema.data_to_props(spec.to_element_data()).items():
+        if key not in keep or key not in collection:
+            collection[key] = value
+    if is_new:
+        table = state_tables.default_state_table(spec.kind, spec.frames)
+        collection["re_states"] = table.to_json() if table else ""
+
+    for panel in spec.panels:
+        root = _panel_root(context, panel)
+        if collection.name not in {c.name for c in root.children}:
+            root.children.link(collection)
+
+    if is_new:
+        _registration_empty(collection, spec, settings)
+        _guide_boxes(collection, spec, settings)
+    elif reposition:
+        _reposition(collection, spec, settings)
+    return is_new
+
+
+def _reposition(collection, spec: ElementSpec, settings) -> None:
+    """Move an already-materialised element onto the current calibration.
+
+    Re-import keeps the registration empty (it is user-owned calibration),
+    so a plain re-read never moves anything. Reposition deliberately snaps
+    the element onto the freshly read placement, the current Pixels/Unit
+    and the current World Origin.
+
+    Everything is computed in *world* space (via ``matrix_world``), so an
+    element whose empty or geometry is parented under an organising master
+    empty still lands where it should instead of being nudged by only its
+    local offset. With Move Geometry on (the default) the whole element
+    travels by the same delta the empty moves, keeping modelled geometry
+    registered; with it off only the empty moves. Guide boxes are always
+    rebuilt at the new absolute coordinates.
+    """
+    empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
+    if empty is not None and spec.placements:
+        primary = spec.placements[0]
+        origin = _origin_offset(settings, primary.panel)
+        cx, cy = _center_px(spec, primary)
+        target = Vector(
+            calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
+        delta = target - empty.matrix_world.translation
+        if settings.reposition_geometry:
+            _translate_element(collection, delta)
+        else:
+            _set_world_location(empty, target)
+    _clear_guide_boxes(collection)
+    _guide_boxes(collection, spec, settings)
+
+
+def _translate_element(collection, delta: Vector) -> None:
+    """Shift the element's objects by ``delta`` in world space.
+
+    Each element *root* moves; a child parented to another object in the
+    same collection is left alone so it rides its parent (moving both would
+    double-shift it). A root parented to something *outside* the element —
+    e.g. every empty parented under one organising master empty — still
+    gets the delta, so those elements are not silently left behind. Guide
+    boxes are skipped because reposition rebuilds them at new coordinates.
+    """
+    if delta.length == 0.0:
+        return
+    members = set(collection.objects)
+    for obj in collection.objects:
+        if obj.get("re_guide") == "box":
+            continue
+        if obj.parent is not None and obj.parent in members:
+            continue  # rides an in-collection parent
+        _set_world_location(obj, obj.matrix_world.translation + delta)
+
+
+def _panel_root(context, panel: str) -> bpy.types.Collection:
+    name = PANEL_ROOTS[panel]
+    root = bpy.data.collections.get(name)
+    if root is None:
+        root = bpy.data.collections.new(name)
+    if name not in {c.name for c in context.scene.collection.children}:
+        context.scene.collection.children.link(root)
+    return root
+
+
+def _center_px(spec: ElementSpec, placement) -> tuple[float, float]:
+    """Frame centre in panel px, or the raw offset when size is unknown."""
+    if spec.frame_w and spec.frame_h:
+        return calibration.element_center_px(placement.x, placement.y,
+                                             spec.frame_w, spec.frame_h)
+    return (placement.x, placement.y)
+
+
+def _registration_empty(collection, spec: ElementSpec, settings) -> None:
+    primary = spec.placements[0]
+    origin = _origin_offset(settings, primary.panel)
+    cx, cy = _center_px(spec, primary)
+    empty = bpy.data.objects.new(f"reg_{spec.path}", None)
+    empty.empty_display_type = "PLAIN_AXES"
+    empty.empty_display_size = 0.1
+    empty.location = Vector(
+        calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
+    collection.objects.link(empty)
+    collection["re_registration"] = empty.name
+
+
+def _guide_boxes(collection, spec: ElementSpec, settings) -> None:
+    """Wireframe rects at each declared placement — never rendered."""
+    if not (spec.frame_w and spec.frame_h):
+        return
+    for index, placement in enumerate(spec.placements):
+        origin = _origin_offset(settings, placement.panel)
+        corners_px = (
+            (placement.x, placement.y),
+            (placement.x + spec.frame_w, placement.y),
+            (placement.x + spec.frame_w, placement.y + spec.frame_h),
+            (placement.x, placement.y + spec.frame_h),
+        )
+        verts = [calibration.panel_px_to_world(x, y, settings.ppb, origin)
+                 for x, y in corners_px]
+        mesh = bpy.data.meshes.new(f"box_{spec.path}_{index}")
+        mesh.from_pydata(verts, [(0, 1), (1, 2), (2, 3), (3, 0)], [])
+        obj = bpy.data.objects.new(mesh.name, mesh)
+        obj.display_type = "WIRE"
+        obj.hide_render = True
+        obj.hide_select = True
+        obj["re_guide"] = "box"
+        collection.objects.link(obj)
+
+
+def _clear_guide_boxes(collection) -> None:
+    """Remove the guide-box wireframes (marked ``re_guide``), leaving any
+    user geometry (rotors, meshes) in the collection untouched."""
+    for obj in [o for o in collection.objects if o.get("re_guide") == "box"]:
+        mesh = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+
+
+def _panel_guides(context, link: ProjectLink, settings, reposition: bool) -> None:
+    for panel in link.device.panels:
+        name = f"RE Panel {panel}"
+        existing = bpy.data.objects.get(name)
+        if existing is not None and not reposition:
+            continue
+        # Canonical SDK panel geometry (rack height + PANEL_WIDTH_PX), so
+        # the guide rect and its centre match every element placed on it —
+        # a mis-sized backdrop must not warp the outline (§4.4).
+        size = calibration.panel_size_px(panel, settings.rack_units)
+        origin = calibration.origin_offset_px(settings.origin, size.width,
+                                              size.height)
+        corners_px = ((0, 0), (size.width, 0),
+                      (size.width, size.height), (0, size.height))
+        verts = [calibration.panel_px_to_world(x, y, settings.ppb, origin)
+                 for x, y in corners_px]
+        if existing is not None:
+            # Reposition in place: same 4-vertex ring, new coordinates.
+            for vert, co in zip(existing.data.vertices, verts):
+                vert.co = co
+            continue
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata(verts, [(0, 1), (1, 2), (2, 3), (3, 0)], [])
+        obj = bpy.data.objects.new(name, mesh)
+        obj.display_type = "WIRE"
+        obj.hide_render = True
+        obj.hide_select = True
+        _panel_root(context, panel).objects.link(obj)
+
+
 class REBLEND_OT_import_project(bpy.types.Operator):
     """Import (or re-read) the linked RE project's GUI2D config (§6.1).
 
@@ -96,11 +309,10 @@ class REBLEND_OT_import_project(bpy.types.Operator):
         settings = _settings(context)
         created = updated = 0
         for spec in link.specs:
-            was_new = self._materialise(context, link, spec, settings,
-                                        self.reposition)
+            was_new = _materialise(context, spec, settings, self.reposition)
             created += was_new
             updated += not was_new
-        self._panel_guides(context, link, settings, self.reposition)
+        _panel_guides(context, link, settings, self.reposition)
 
         verb = "re-imported" if self.reposition else "imported"
         placed = f", {updated} repositioned" if self.reposition else ""
@@ -110,204 +322,6 @@ class REBLEND_OT_import_project(bpy.types.Operator):
             f"{updated} updated{placed}",
         )
         return {"FINISHED"}
-
-    # -- materialisation ----------------------------------------------------
-
-    def _origin_offset(self, link: ProjectLink, settings, panel: str
-                       ) -> tuple[float, float]:
-        """The world-origin pixel offset for one panel (§4.4).
-
-        Derived from the *canonical* SDK panel geometry — width is always
-        PANEL_WIDTH_PX and height comes from the rack-unit setting (or the
-        folded height) — never from a probed element's size. A backdrop sheet
-        that is missing or mis-authored must not drag the centre off; the whole
-        workspace centres on the same rack-height-derived origin regardless of
-        whether any one element happens to be sized correctly (§4.4).
-        """
-        size = calibration.panel_size_px(panel, settings.rack_units)
-        return calibration.origin_offset_px(settings.origin, size.width,
-                                            size.height)
-
-    def _materialise(self, context, link: ProjectLink, spec: ElementSpec,
-                     settings, reposition: bool) -> bool:
-        collection = _collection_by_path(spec.path)
-        is_new = collection is None
-        if is_new:
-            collection = bpy.data.collections.new(spec.path)
-
-        # Fill/update the Lua-derived properties. User-owned properties
-        # (sweep, states, registration) are only seeded on creation, and a
-        # frame size the user already chose is never clobbered by "unknown".
-        keep = set()
-        if not is_new:
-            keep = {"re_sweep_deg", "re_states", "re_registration"}
-            if spec.frame_w == 0:
-                keep |= {"re_frame_w", "re_frame_h"}
-        for key, value in schema.data_to_props(spec.to_element_data()).items():
-            if key not in keep:
-                collection[key] = value
-        if is_new:
-            table = state_tables.default_state_table(spec.kind, spec.frames)
-            collection["re_states"] = table.to_json() if table else ""
-
-        for panel in spec.panels:
-            root = self._panel_root(context, panel)
-            if collection.name not in {c.name for c in root.children}:
-                root.children.link(collection)
-
-        if is_new:
-            self._registration_empty(collection, spec, link, settings)
-            self._guide_boxes(collection, spec, link, settings)
-        elif reposition:
-            self._reposition(collection, spec, link, settings)
-        return is_new
-
-    def _reposition(self, collection, spec: ElementSpec, link: ProjectLink,
-                    settings) -> None:
-        """Move an already-materialised element onto the current calibration.
-
-        Re-import keeps the registration empty (it is user-owned calibration),
-        so a plain re-read never moves anything. Reposition deliberately snaps
-        the element onto the freshly read placement, the current Pixels/Unit
-        and the current World Origin.
-
-        Everything is computed in *world* space (via ``matrix_world``), so an
-        element whose empty or geometry is parented under an organising master
-        empty still lands where it should instead of being nudged by only its
-        local offset. With Move Geometry on (the default) the whole element
-        travels by the same delta the empty moves, keeping modelled geometry
-        registered; with it off only the empty moves. Guide boxes are always
-        rebuilt at the new absolute coordinates.
-        """
-        empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
-        if empty is not None and spec.placements:
-            primary = spec.placements[0]
-            origin = self._origin_offset(link, settings, primary.panel)
-            cx, cy = self._center_px(spec, primary)
-            target = Vector(
-                calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
-            delta = target - empty.matrix_world.translation
-            if settings.reposition_geometry:
-                self._translate_element(collection, delta)
-            else:
-                _set_world_location(empty, target)
-        self._clear_guide_boxes(collection)
-        self._guide_boxes(collection, spec, link, settings)
-
-    @staticmethod
-    def _translate_element(collection, delta: Vector) -> None:
-        """Shift the element's objects by ``delta`` in world space.
-
-        Each element *root* moves; a child parented to another object in the
-        same collection is left alone so it rides its parent (moving both would
-        double-shift it). A root parented to something *outside* the element —
-        e.g. every empty parented under one organising master empty — still
-        gets the delta, so those elements are not silently left behind. Guide
-        boxes are skipped because reposition rebuilds them at new coordinates.
-        """
-        if delta.length == 0.0:
-            return
-        members = set(collection.objects)
-        for obj in collection.objects:
-            if obj.get("re_guide") == "box":
-                continue
-            if obj.parent is not None and obj.parent in members:
-                continue  # rides an in-collection parent
-            _set_world_location(obj, obj.matrix_world.translation + delta)
-
-    def _panel_root(self, context, panel: str) -> bpy.types.Collection:
-        name = PANEL_ROOTS[panel]
-        root = bpy.data.collections.get(name)
-        if root is None:
-            root = bpy.data.collections.new(name)
-        if name not in {c.name for c in context.scene.collection.children}:
-            context.scene.collection.children.link(root)
-        return root
-
-    @staticmethod
-    def _center_px(spec: ElementSpec, placement) -> tuple[float, float]:
-        """Frame centre in panel px, or the raw offset when size is unknown."""
-        if spec.frame_w and spec.frame_h:
-            return calibration.element_center_px(placement.x, placement.y,
-                                                 spec.frame_w, spec.frame_h)
-        return (placement.x, placement.y)
-
-    def _registration_empty(self, collection, spec: ElementSpec,
-                            link: ProjectLink, settings) -> None:
-        primary = spec.placements[0]
-        origin = self._origin_offset(link, settings, primary.panel)
-        cx, cy = self._center_px(spec, primary)
-        empty = bpy.data.objects.new(f"reg_{spec.path}", None)
-        empty.empty_display_type = "PLAIN_AXES"
-        empty.empty_display_size = 0.1
-        empty.location = Vector(
-            calibration.panel_px_to_world(cx, cy, settings.ppb, origin))
-        collection.objects.link(empty)
-        collection["re_registration"] = empty.name
-
-    def _guide_boxes(self, collection, spec: ElementSpec, link: ProjectLink,
-                     settings) -> None:
-        """Wireframe rects at each declared placement — never rendered."""
-        if not (spec.frame_w and spec.frame_h):
-            return
-        for index, placement in enumerate(spec.placements):
-            origin = self._origin_offset(link, settings, placement.panel)
-            corners_px = (
-                (placement.x, placement.y),
-                (placement.x + spec.frame_w, placement.y),
-                (placement.x + spec.frame_w, placement.y + spec.frame_h),
-                (placement.x, placement.y + spec.frame_h),
-            )
-            verts = [calibration.panel_px_to_world(x, y, settings.ppb, origin)
-                     for x, y in corners_px]
-            mesh = bpy.data.meshes.new(f"box_{spec.path}_{index}")
-            mesh.from_pydata(verts, [(0, 1), (1, 2), (2, 3), (3, 0)], [])
-            obj = bpy.data.objects.new(mesh.name, mesh)
-            obj.display_type = "WIRE"
-            obj.hide_render = True
-            obj.hide_select = True
-            obj["re_guide"] = "box"
-            collection.objects.link(obj)
-
-    @staticmethod
-    def _clear_guide_boxes(collection) -> None:
-        """Remove the guide-box wireframes (marked ``re_guide``), leaving any
-        user geometry (rotors, meshes) in the collection untouched."""
-        for obj in [o for o in collection.objects if o.get("re_guide") == "box"]:
-            mesh = obj.data
-            bpy.data.objects.remove(obj, do_unlink=True)
-            if mesh is not None and mesh.users == 0:
-                bpy.data.meshes.remove(mesh)
-
-    def _panel_guides(self, context, link: ProjectLink, settings,
-                      reposition: bool) -> None:
-        for panel in link.device.panels:
-            name = f"RE Panel {panel}"
-            existing = bpy.data.objects.get(name)
-            if existing is not None and not reposition:
-                continue
-            # Canonical SDK panel geometry (rack height + PANEL_WIDTH_PX), so
-            # the guide rect and its centre match every element placed on it —
-            # a mis-sized backdrop must not warp the outline (§4.4).
-            size = calibration.panel_size_px(panel, settings.rack_units)
-            origin = calibration.origin_offset_px(settings.origin, size.width,
-                                                  size.height)
-            corners_px = ((0, 0), (size.width, 0),
-                          (size.width, size.height), (0, size.height))
-            verts = [calibration.panel_px_to_world(x, y, settings.ppb, origin)
-                     for x, y in corners_px]
-            if existing is not None:
-                # Reposition in place: same 4-vertex ring, new coordinates.
-                for vert, co in zip(existing.data.vertices, verts):
-                    vert.co = co
-                continue
-            mesh = bpy.data.meshes.new(name)
-            mesh.from_pydata(verts, [(0, 1), (1, 2), (2, 3), (3, 0)], [])
-            obj = bpy.data.objects.new(name, mesh)
-            obj.display_type = "WIRE"
-            obj.hide_render = True
-            obj.hide_select = True
-            self._panel_root(context, panel).objects.link(obj)
 
 
 class REBLEND_OT_validate(bpy.types.Operator):
@@ -871,6 +885,473 @@ class REBLEND_OT_set_state_value(bpy.types.Operator):
         return float(self.float_value)
 
 
+# ---------------------------------------------------------------------------
+# M2 — sync & patch-mode export (§6.1, §6.2)
+# ---------------------------------------------------------------------------
+
+
+def _derived_primary_placement(collection, data: schema.ElementData, settings):
+    """The primary placement recomputed from the registration empty.
+
+    The empty is how a control is *moved* in M2: drag it, export, and its
+    world position converts back through the current calibration into the
+    top-left panel-pixel offset the Lua stores. The inverse of what import
+    does — centre when the frame size is known, raw point otherwise.
+    """
+    empty = bpy.data.objects.get(str(collection.get("re_registration", "")))
+    if empty is None or not data.placements:
+        return None
+    primary = data.placements[0]
+    origin = _origin_offset(settings, primary.panel)
+    cx, cy = calibration.world_to_panel_px(
+        tuple(empty.matrix_world.translation), settings.ppb, origin)
+    if data.has_frame_size:
+        cx, cy = calibration.element_offset_px(cx, cy, data.frame_w, data.frame_h)
+    return schema.Placement(primary.panel, primary.node,
+                            float(round(cx)), float(round(cy)))
+
+
+def _store_placements(collection, data: schema.ElementData) -> None:
+    """Write the placements (and their primary mirror) back onto the element."""
+    collection["re_placements"] = json.dumps(
+        [[p.panel, p.node, p.x, p.y] for p in data.placements])
+    if data.placements:
+        collection["re_offset_x"] = data.placements[0].x
+        collection["re_offset_y"] = data.placements[0].y
+
+
+class REBLEND_OT_export_patch(bpy.types.Operator):
+    """Patch the scene's offsets and frame counts into device_2D.lua (§6.2).
+
+    Patch mode rewrites only the offset/frames number literals of nodes it
+    located via the interpreter read — comments and formatting survive
+    byte-for-byte, edits are verified by re-parsing before the file is
+    replaced, and any anchor ambiguity refuses the whole export (§10.2).
+    """
+
+    bl_idname = "reblend.export_patch"
+    bl_label = "Export Layout (Patch Lua)"
+
+    def execute(self, context):
+        settings = _settings(context)
+        try:
+            link = load_project(_project_root(context))
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        snapshots = []
+        for collection in _element_collections():
+            data = schema.props_to_data(collection)
+            derived = _derived_primary_placement(collection, data, settings)
+            if derived is not None:
+                data.placements = (derived,) + data.placements[1:]
+            snapshots.append((collection, data))
+
+        edits, notes = lua_writer.compute_device_edits(
+            link.device, [data for _, data in snapshots])
+        for note in notes:
+            print(f"[RE-Blend] export: {note}")
+        if not edits:
+            skipped = f" ({len(notes)} unknown node(s) skipped)" if notes else ""
+            self.report({"INFO"}, f"device_2D.lua already matches the scene{skipped}")
+            return {"FINISHED"}
+
+        try:
+            result = lua_writer.patch_device_2d_file(link.device.source_path, edits)
+        except PatchError as exc:
+            for reason in exc.reasons:
+                print(f"[RE-Blend] refused: {reason}")
+            shown = "; ".join(exc.reasons[:2])
+            more = f" (+{len(exc.reasons) - 2} more, see console)" if len(exc.reasons) > 2 else ""
+            self.report({"ERROR"}, f"refused, nothing written: {shown}{more}")
+            return {"CANCELLED"}
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        # The file now agrees with the scene: keep the re_* mirror true too —
+        # but only for elements whose node the patch could actually reach. An
+        # element skipped as unknown ("run Sync") exported nothing, and
+        # overwriting its mirror would silently desync it from the Lua.
+        for collection, data in snapshots:
+            primary = data.placements[0] if data.placements else None
+            if primary is not None and link.device.node(
+                    primary.panel, primary.node) is not None:
+                _store_placements(collection, data)
+        for change in result.applied:
+            print(f"[RE-Blend] patched: {change}")
+        self.report(
+            {"INFO"},
+            f"patched {len(result.applied)} value(s) in "
+            f"{link.device.source_path.name} — verified by re-parse",
+        )
+        return {"FINISHED"}
+
+
+class REBLEND_OT_sync_project(bpy.types.Operator):
+    """Diff the project's Lua against the scene without changing either (§6.1).
+
+    New nodes, removed nodes, and changed values land in the Sync list for
+    per-item accept-theirs/keep-mine resolution; Apply Resolutions acts on it.
+    """
+
+    bl_idname = "reblend.sync_project"
+    bl_label = "Sync With Project"
+
+    def execute(self, context):
+        try:
+            link = load_project(_project_root(context))
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        elements = [schema.props_to_data(c) for c in _element_collections()]
+        items = merge.diff_link(link.specs, elements)
+        props.store_merge_items(_settings(context), items)
+
+        if not items:
+            self.report({"INFO"}, "scene and project are in sync")
+        else:
+            counts = {status: sum(1 for i in items if i.status == status)
+                      for status in (merge.ADDED, merge.REMOVED, merge.CHANGED)}
+            self.report(
+                {"INFO"},
+                f"sync: {counts[merge.ADDED]} new, {counts[merge.REMOVED]} "
+                f"removed, {counts[merge.CHANGED]} changed — resolve in the "
+                "RE-Blend panel",
+            )
+        return {"FINISHED"}
+
+
+class REBLEND_OT_apply_sync(bpy.types.Operator):
+    """Apply the per-item Sync resolutions (§6.1).
+
+    Accept-theirs materialises new elements and snaps changed ones onto the
+    file's values through the same path a full import uses; keep-mine leaves
+    the scene's value in place (patch-mode export writes it back). Removed
+    nodes stay flagged — never auto-deleted.
+    """
+
+    bl_idname = "reblend.apply_sync"
+    bl_label = "Apply Resolutions"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = _settings(context)
+        try:
+            link = load_project(_project_root(context))
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        elements = [schema.props_to_data(c) for c in _element_collections()]
+        items = {item.path: item for item in merge.diff_link(link.specs, elements)}
+
+        accepted = kept = flagged = 0
+        rig_stale: list[str] = []
+        for row in settings.merge_items:
+            item = items.get(row.path)
+            if item is None:
+                continue  # resolved since the diff was stored
+            if item.status == merge.REMOVED:
+                flagged += 1
+                continue
+            if row.resolution != "THEIRS":
+                kept += 1
+                continue
+            # Reposition only when the accepted change is positional: snapping
+            # the empty on a frames-only accept would silently destroy a
+            # pending, not-yet-exported drag of the registration empty.
+            positional = any(change.field in ("placements", "frame size")
+                             for change in item.changes)
+            _materialise(context, item.spec, settings, reposition=positional)
+            if any(change.field == "frames" for change in item.changes):
+                rig_stale.append(item.path)
+            accepted += 1
+
+        elements = [schema.props_to_data(c) for c in _element_collections()]
+        props.store_merge_items(settings, merge.diff_link(link.specs, elements))
+
+        parts = [f"accepted {accepted} from Lua", f"kept {kept} scene value(s)"]
+        if flagged:
+            parts.append(f"{flagged} removed node(s) stay flagged, not deleted")
+        if rig_stale:
+            # The rig still encodes the old frame count (§4.3) — art and Lua
+            # agree again, but the driver/keyframes must be rebuilt.
+            parts.append("frame count changed, re-run Generate Rig for: "
+                         + ", ".join(sorted(rig_stale)))
+        self.report({"WARNING"} if rig_stale else {"INFO"}, "; ".join(parts))
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# M2 — panel preview, state playground, flipbook, contact sheet (§5.3, §5.4)
+# ---------------------------------------------------------------------------
+
+
+def _show_image(context, name: str, pixels) -> "bpy.types.Image":
+    """Put a top-down RGBA array into an image datablock, replacing any prior
+    result, and point an open Image Editor at it (best effort)."""
+    height, width = pixels.shape[0], pixels.shape[1]
+    image = bpy.data.images.get(name)
+    if image is not None and tuple(image.size) != (width, height):
+        bpy.data.images.remove(image)
+        image = None
+    if image is None:
+        image = bpy.data.images.new(name, width=width, height=height, alpha=True)
+    image.alpha_mode = "STRAIGHT"
+    # Data colorspace: the composited values are display-referred already
+    # (they came out of finished sheets); Blender must not re-transform them.
+    bpy_io.set_data_colorspace(image.colorspace_settings)
+    bpy_io.write_pixels(image, pixels)
+    _point_image_editor_at(context, image)
+    return image
+
+
+def _point_image_editor_at(context, image):
+    """Show the image in the first open Image Editor; returns that space (its
+    ``image_user`` drives sequence playback) or None headless/without one."""
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "IMAGE_EDITOR":
+                area.spaces.active.image = image
+                return area.spaces.active
+    return None
+
+
+def _active_element_sheet(op, context):
+    """(data, strip pixels, frame_h) of the active element's rendered sheet,
+    or None with the error already reported."""
+    collection = context.collection
+    if collection is None or not schema.is_element(collection):
+        op.report({"ERROR"}, "active collection is not an RE Element")
+        return None
+    data = schema.props_to_data(collection)
+    try:
+        png = _project_root(context) / "GUI2D" / f"{data.path}.png"
+    except LuaConfigError as exc:
+        op.report({"ERROR"}, str(exc))
+        return None
+    if not png.is_file():
+        op.report({"ERROR"}, f"no rendered sheet at {png} — render the element first")
+        return None
+    pixels = bpy_io.load_raw_pixels(png)
+    frame_h = stitcher.frame_height(pixels.shape[0], data.frames)
+    if frame_h is None:
+        op.report(
+            {"ERROR"},
+            f"'{data.path}': sheet height {pixels.shape[0]} does not split "
+            f"into re_frames ({data.frames}) equal slices — re-render or fix "
+            "re_frames",
+        )
+        return None
+    return data, pixels, frame_h
+
+
+class REBLEND_OT_preview_panel(bpy.types.Operator):
+    """Composite the rendered sheets into a full-panel preview image (§5.3).
+
+    Each element shows its Preview Frame (the state playground sliders in the
+    panel), so state combinations are checked before anything reaches the
+    SDK. Mirrors RE2DPreview, but pre-export and per-state.
+    """
+
+    bl_idname = "reblend.preview_panel"
+    bl_label = "Preview Panel"
+
+    def execute(self, context):
+        settings = _settings(context)
+        panel = settings.preview_panel
+        try:
+            gui2d = _project_root(context) / "GUI2D"
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        entries, skipped = [], []
+        for collection in _element_collections():
+            data = schema.props_to_data(collection)
+            placements = [p for p in data.placements if p.panel == panel]
+            if not placements:
+                continue
+            png = gui2d / f"{data.path}.png"
+            if not png.is_file():
+                skipped.append(f"{data.path} (not rendered)")
+                continue
+            preview_frame = int(collection.get("re_preview_frame", 0))
+            entries.append((data, placements, png, preview_frame))
+        if not entries:
+            self.report(
+                {"ERROR"},
+                f"nothing to composite on '{panel}' — render sheets first",
+            )
+            return {"CANCELLED"}
+
+        # Backdrop lowest, exactly as it sits in Reason; the rest by name for
+        # a deterministic (and irrelevant — they don't overlap) paint order.
+        entries.sort(key=lambda e: (e[0].kind != kinds.BACKDROP, e[0].path))
+        layers = []
+        for data, placements, png, preview_frame in entries:
+            pixels = bpy_io.load_raw_pixels(png)
+            frame_h = stitcher.frame_height(pixels.shape[0], data.frames)
+            if frame_h is None:
+                skipped.append(f"{data.path} (height not {data.frames} slices)")
+                continue
+            frame = min(max(preview_frame, 0), data.frames - 1)
+            for placement in placements:
+                layers.append(compositor.CompositeLayer(
+                    pixels, frame_h, frame, placement.x, placement.y))
+
+        size = calibration.panel_size_px(panel, settings.rack_units)
+        canvas = compositor.composite_panel(size.width, size.height, layers)
+        image = _show_image(context, f"RE Preview {panel}", canvas)
+
+        message = f"composited {len(layers)} layer(s) into '{image.name}'"
+        if skipped:
+            message += f"; skipped {', '.join(skipped)}"
+        self.report({"WARNING"} if skipped else {"INFO"}, message)
+        return {"FINISHED"}
+
+
+class REBLEND_OT_contact_sheet(bpy.types.Operator):
+    """Grid of every frame of the active element's rendered sheet (§5.4) —
+    at-a-glance QA for multi-state controls and sweep consistency."""
+
+    bl_idname = "reblend.contact_sheet"
+    bl_label = "Contact Sheet"
+
+    columns: bpy.props.IntProperty(
+        name="Columns",
+        description="Grid columns; 0 picks a near-square layout",
+        default=0,
+        min=0,
+    )
+
+    def execute(self, context):
+        sheet_source = _active_element_sheet(self, context)
+        if sheet_source is None:
+            return {"CANCELLED"}
+        data, pixels, frame_h = sheet_source
+        sheet = compositor.contact_sheet(pixels, frame_h, columns=self.columns)
+        image = _show_image(context, f"RE Contact {data.path}", sheet)
+        self.report(
+            {"INFO"},
+            f"contact sheet of {data.frames} frame(s) in '{image.name}'",
+        )
+        return {"FINISHED"}
+
+
+class REBLEND_OT_flipbook(bpy.types.Operator):
+    """Load the active element's sheet as a playable frame sequence (§5.4),
+    so 61-frame smoothness is checked in the Image Editor before the SDK
+    ever sees the file."""
+
+    bl_idname = "reblend.flipbook"
+    bl_label = "Flipbook"
+
+    def execute(self, context):
+        sheet_source = _active_element_sheet(self, context)
+        if sheet_source is None:
+            return {"CANCELLED"}
+        data, pixels, frame_h = sheet_source
+        if data.frames < 2:
+            self.report({"INFO"}, f"'{data.path}' has 1 frame — nothing to play")
+            return {"FINISHED"}
+
+        # Drop the previous sequence datablock *before* rewriting its files
+        # (a loaded sequence can pin them on Windows), then reuse one stable
+        # per-sheet scratch dir so repeated flipbooks never pile up in temp.
+        name = f"RE Flipbook {data.path}"
+        existing = bpy.data.images.get(name)
+        if existing is not None:
+            bpy.data.images.remove(existing)
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in data.path)
+        scratch = Path(tempfile.gettempdir()) / "reblend_flipbook" / safe
+        scratch.mkdir(parents=True, exist_ok=True)
+        for stale in scratch.glob("frame_*.png"):
+            with contextlib.suppress(OSError):
+                stale.unlink()
+        for index, frame in enumerate(stitcher.split_strip(pixels, frame_h)):
+            bpy_io.save_strip(frame, scratch / f"frame_{index + 1:04d}.png",
+                              name=f"reblend_flip_{data.path}_{index}")
+
+        image = bpy.data.images.load(str(scratch / "frame_0001.png"))
+        image.name = name
+        image.source = "SEQUENCE"
+        bpy_io.set_data_colorspace(image.colorspace_settings)
+
+        space = _point_image_editor_at(context, image)
+        if space is not None:
+            user = space.image_user
+            user.frame_duration = data.frames
+            user.frame_start = context.scene.frame_start
+            user.use_cyclic = True
+        self.report(
+            {"INFO"},
+            f"flipbook: {data.frames} frames in '{image.name}' — play or "
+            "scrub the timeline in the Image Editor",
+        )
+        return {"FINISHED"}
+
+
+class REBLEND_OT_launch_tool(bpy.types.Operator):
+    """One-click RE2DRender / RE2DPreview on the linked project (§5.3).
+
+    Tool paths are per-machine add-on preferences, never project data. The
+    render output goes to RE2DRender_Output/ beside GUI2D/ so the generated
+    build files never mix into the source sheets.
+    """
+
+    bl_idname = "reblend.launch_tool"
+    bl_label = "Launch SDK Tool"
+
+    tool: bpy.props.EnumProperty(
+        name="Tool",
+        items=(
+            ("RENDER", "RE2DRender", "Compile GUI2D/ and generate the 0.5x set"),
+            ("PREVIEW", "RE2DPreview", "Render the panels for a quick look"),
+        ),
+        default="RENDER",
+    )
+
+    def execute(self, context):
+        preferences = props.tool_preferences(context)
+        raw = ""
+        if preferences is not None:
+            raw = (preferences.re2drender_path if self.tool == "RENDER"
+                   else preferences.re2dpreview_path)
+        exe = Path(bpy.path.abspath(raw)) if raw else None
+        if exe is None or not exe.is_file():
+            self.report(
+                {"ERROR"},
+                "tool path not set — configure it per machine in "
+                "Preferences > Add-ons > RE-Blend",
+            )
+            return {"CANCELLED"}
+
+        try:
+            root = _project_root(context)
+        except LuaConfigError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        gui2d = root / "GUI2D"
+        if self.tool == "RENDER":
+            out_dir = root / "RE2DRender_Output"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            args = [str(exe), str(gui2d), str(out_dir)]
+        else:
+            args = [str(exe), str(gui2d)]
+
+        try:
+            subprocess.Popen(args)
+        except OSError as exc:
+            self.report({"ERROR"}, f"failed to launch {exe.name}: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "launched: " + " ".join(args))
+        return {"FINISHED"}
+
+
 CLASSES = (
     REBLEND_OT_import_project,
     REBLEND_OT_validate,
@@ -881,4 +1362,11 @@ CLASSES = (
     REBLEND_OT_add_state_action,
     REBLEND_OT_remove_state_action,
     REBLEND_OT_set_state_value,
+    REBLEND_OT_export_patch,
+    REBLEND_OT_sync_project,
+    REBLEND_OT_apply_sync,
+    REBLEND_OT_preview_panel,
+    REBLEND_OT_contact_sheet,
+    REBLEND_OT_flipbook,
+    REBLEND_OT_launch_tool,
 )

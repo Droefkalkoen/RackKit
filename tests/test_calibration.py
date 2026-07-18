@@ -86,3 +86,11 @@ def test_dominant_axis():
 def test_element_center():
     # device_2D offset is the frame's top-left; registration sits at centre
     assert cal.element_center_px(950, 120, 65, 65) == (982.5, 152.5)
+
+
+def test_element_offset_inverts_center():
+    # import places by centre, export recovers the offset — exact round trip
+    assert cal.element_offset_px(982.5, 152.5, 65, 65) == (950, 120)
+    for offset in ((0, 0), (1885, 172), (37, 41)):
+        center = cal.element_center_px(*offset, 25, 60)
+        assert cal.element_offset_px(*center, 25, 60) == offset

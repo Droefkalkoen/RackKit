@@ -15,7 +15,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 
-__all__ = ["set_data_colorspace", "load_raw_pixels", "save_strip"]
+__all__ = ["set_data_colorspace", "load_raw_pixels", "write_pixels", "save_strip"]
 
 #: Non-transforming ("data") colorspaces, best first. Blender 4.x's default
 #: OCIO config dropped the legacy ``Raw`` name in favour of ``Non-Color``;
@@ -53,6 +53,18 @@ def load_raw_pixels(path: Path | str) -> np.ndarray:
     finally:
         bpy.data.images.remove(img)
     return pixels[::-1]
+
+
+def write_pixels(image, pixels: np.ndarray) -> None:
+    """Fill an image datablock from a top-down (H, W, 4) float RGBA array.
+
+    Owns the flip to Blender's bottom-up buffer alongside the rest of this
+    module's pixel semantics, and takes ``foreach_set`` — bulk copy instead of
+    per-float Python assignment — which matters at panel size (3770 px wide).
+    """
+    flat = np.ascontiguousarray(pixels[::-1], dtype=np.float32).reshape(-1)
+    image.pixels.foreach_set(flat)
+    image.update()
 
 
 def save_strip(strip: np.ndarray, path: Path | str, name: str = "reblend_strip") -> None:

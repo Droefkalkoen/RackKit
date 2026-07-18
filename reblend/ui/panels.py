@@ -1,4 +1,4 @@
-"""The N-panel "RE" tab: project, element list, validation report (§8).
+"""The N-panel "RE-Blend" tab: project, elements, sync, preview, validation (§8).
 
 Panels draw state and fire operators; they hold no logic of their own, so
 everything visible here is equally reachable headlessly (§7).
@@ -9,6 +9,7 @@ from __future__ import annotations
 import bpy
 
 from ..model import kinds, schema, state_tables
+from ..project import merge
 
 _SEVERITY_ICONS = {"error": "CANCEL", "warning": "ERROR"}  # ERROR = the ⚠ icon
 _KIND_ICONS = {
@@ -36,7 +37,7 @@ class REBLEND_PT_project(bpy.types.Panel):
     bl_label = "RE Project"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "RE"
+    bl_category = "RE-Blend"
     bl_order = 0
 
     def draw(self, context):
@@ -77,7 +78,7 @@ class REBLEND_PT_active(bpy.types.Panel):
     bl_label = "Active Element"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "RE"
+    bl_category = "RE-Blend"
     bl_order = 1
 
     def draw(self, context):
@@ -107,7 +108,7 @@ class REBLEND_PT_state_table(bpy.types.Panel):
     bl_label = "State Table"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "RE"
+    bl_category = "RE-Blend"
     bl_parent_id = "REBLEND_PT_active"
     bl_order = 0
 
@@ -187,7 +188,7 @@ class REBLEND_PT_elements(bpy.types.Panel):
     bl_label = "All RE Elements"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "RE"
+    bl_category = "RE-Blend"
     bl_order = 2
 
     def draw(self, context):
@@ -228,12 +229,101 @@ class REBLEND_PT_elements(bpy.types.Panel):
                          icon="FULLSCREEN_ENTER").scope = "MISSING"
 
 
+_STATUS_ICONS = {
+    merge.ADDED: "ADD",
+    merge.REMOVED: "TRASH",
+    merge.CHANGED: "ARROW_LEFTRIGHT",
+}
+
+
+class REBLEND_PT_sync(bpy.types.Panel):
+    """Two-way sync (M2): patch-mode export and the re-import merge (§6.1,
+    §6.2). The merge list carries per-item accept-theirs/keep-mine; removed
+    nodes are flagged here, never auto-deleted."""
+
+    bl_label = "Sync & Export"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "RE-Blend"
+    bl_order = 3
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.reblend
+        col = layout.column(align=True)
+        col.operator("reblend.export_patch", icon="EXPORT")
+        col.operator("reblend.sync_project", icon="FILE_REFRESH")
+
+        items = settings.merge_items
+        if not items:
+            layout.label(text="No differences recorded — run Sync", icon="INFO")
+            return
+        for item in items:
+            box = layout.box()
+            row = box.row(align=True)
+            row.label(text=f"{item.path} · {item.status}",
+                      icon=_STATUS_ICONS.get(item.status, "QUESTION"))
+            if item.status != merge.REMOVED:
+                row.prop(item, "resolution", text="")
+            for line in _wrap(item.summary):
+                box.label(text=line)
+        layout.operator("reblend.apply_sync", icon="CHECKMARK")
+
+
+class REBLEND_PT_preview(bpy.types.Panel):
+    """Panel compositor preview and QA tools (§5.3, §5.4): the state
+    playground picks each element's frame, Preview composites them at their
+    offsets, and the SDK tools close the real loop."""
+
+    bl_label = "Preview & QA"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "RE-Blend"
+    bl_order = 4
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.reblend
+        row = layout.row(align=True)
+        row.prop(settings, "preview_panel", text="")
+        row.operator("reblend.preview_panel", text="Preview", icon="RENDERLAYERS")
+
+        playable = []
+        for collection in bpy.data.collections:
+            if not schema.is_element(collection):
+                continue
+            data = schema.props_to_data(collection)
+            if data.frames > 1 and any(
+                p.panel == settings.preview_panel for p in data.placements
+            ):
+                playable.append((collection, data))
+        if playable:
+            box = layout.box()
+            box.label(text="State Playground", icon="ACTION")
+            for collection, data in sorted(playable, key=lambda e: e[1].path):
+                if "re_preview_frame" not in collection:
+                    continue  # pre-M2 element; migration fills it on file load
+                row = box.row(align=True)
+                row.label(text=data.path)
+                row.prop(collection, '["re_preview_frame"]',
+                         text=f"0..{data.frames - 1}")
+
+        col = layout.column(align=True)
+        col.operator("reblend.contact_sheet", icon="IMGDISPLAY")
+        col.operator("reblend.flipbook", icon="PLAY")
+        col = layout.column(align=True)
+        col.operator("reblend.launch_tool", text="Run RE2DRender",
+                     icon="RENDER_STILL").tool = "RENDER"
+        col.operator("reblend.launch_tool", text="Run RE2DPreview",
+                     icon="WORKSPACE").tool = "PREVIEW"
+
+
 class REBLEND_PT_validation(bpy.types.Panel):
     bl_label = "Validation Report"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "RE"
-    bl_order = 3
+    bl_category = "RE-Blend"
+    bl_order = 5
 
     def draw(self, context):
         layout = self.layout
@@ -313,5 +403,7 @@ CLASSES = (
     REBLEND_PT_active,
     REBLEND_PT_state_table,
     REBLEND_PT_elements,
+    REBLEND_PT_sync,
+    REBLEND_PT_preview,
     REBLEND_PT_validation,
 )

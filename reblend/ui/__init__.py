@@ -1,4 +1,4 @@
-"""UI layer: the N-panel "RE" tab, operators, and scene settings (§8).
+"""UI layer: the N-panel "RE-Blend" tab, operators, and scene settings (§8).
 
 Everything an operator does is UI-stateless (§7): the panels only collect
 inputs and display results, so the same operators drive headless use in M3.

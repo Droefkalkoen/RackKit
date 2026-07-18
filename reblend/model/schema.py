@@ -40,7 +40,7 @@ __all__ = [
 ]
 
 #: Current schema version. Bump on any property change and add a migration.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Property names and their defaults at the current schema version.
 DEFAULTS: dict[str, Any] = {
@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
     "re_sweep_deg": 300.0,    # knob sweep, -sweep/2..+sweep/2 (§4.3)
     "re_states": "",          # state table JSON (state_tables module), "" = none
     "re_placements": "[]",    # JSON list of [panel, node, x, y]
+    "re_preview_frame": 0,    # frame shown in the panel preview (§5.3)
 }
 
 
@@ -135,6 +136,13 @@ def _lift_pre_schema(props: MutableMapping[str, Any]) -> None:
     for key, value in DEFAULTS.items():
         if key not in props:
             props[key] = value
+
+
+@_migration(1)
+def _add_preview_frame(props: MutableMapping[str, Any]) -> None:
+    """v1 → v2: the state-playground preview frame (§5.3) joins the schema."""
+    if "re_preview_frame" not in props:
+        props["re_preview_frame"] = 0
 
 
 def migrate(props: MutableMapping[str, Any]) -> bool:

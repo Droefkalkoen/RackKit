@@ -116,7 +116,7 @@ If the Lua changed upstream, **Sync With Project** lists what's new, removed, or
 with per-item *Theirs / Mine* resolution; **Apply Resolutions** brings accepted changes in 
 through the same path a full import uses.
 
-## What it deliberately doesn't do
+## What it doesn't do
 
 RE-Blend produces the hi-res PNGs and never the 0.5× set — that's
 [RE2DRender](https://developer.reasonstudios.com/)'s job. It reads `motherboard_def.lua` for

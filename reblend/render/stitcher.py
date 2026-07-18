@@ -16,7 +16,7 @@ from typing import Sequence
 
 import numpy as np
 
-__all__ = ["StitchError", "stitch", "unpremultiply", "split_strip"]
+__all__ = ["StitchError", "stitch", "unpremultiply", "split_strip", "frame_height"]
 
 
 class StitchError(Exception):
@@ -37,6 +37,19 @@ def stitch(frames: Sequence[np.ndarray]) -> np.ndarray:
                 f"expected {shape[1]}x{shape[0]} — all frames must match"
             )
     return np.concatenate([np.asarray(f, dtype=np.float32) for f in frames], axis=0)
+
+
+def frame_height(strip_height: int, frames: int) -> int | None:
+    """Per-frame height implied by a strip, or None when the contract fails.
+
+    The single authority on "strip height = frameHeight × frameCount" for
+    consumers that only have the sheet and a claimed frame count: returns a
+    positive height only when ``frames >= 1`` and it divides exactly.
+    """
+    if frames < 1:
+        return None
+    height, remainder = divmod(strip_height, frames)
+    return height if remainder == 0 and height > 0 else None
 
 
 def split_strip(strip: np.ndarray, frame_h: int) -> list[np.ndarray]:

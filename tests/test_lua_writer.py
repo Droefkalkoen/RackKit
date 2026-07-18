@@ -131,6 +131,17 @@ def test_file_patch_is_written_and_reparses(silence_detector, tmp_path):
     assert read_device_2d(target).node("front", "SilenceSwitch").offset == (1800, 150)
 
 
+def test_file_patch_preserves_permissions(silence_detector, tmp_path):
+    # mkstemp files are 0600; the replaced file must keep e.g. group-read so
+    # CI or teammates on a shared checkout don't lose access to it.
+    project = tmp_path / "proj"
+    shutil.copytree(silence_detector, project)
+    target = project / "GUI2D" / "device_2D.lua"
+    target.chmod(0o664)
+    patch_device_2d_file(target, [OffsetEdit("front", "SilenceSwitch", 1800, 150)])
+    assert (target.stat().st_mode & 0o777) == 0o664
+
+
 def test_refusal_leaves_the_file_untouched(silence_detector, tmp_path):
     project = tmp_path / "proj"
     shutil.copytree(silence_detector, project)

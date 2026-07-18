@@ -10,6 +10,7 @@ from __future__ import annotations
 import bpy
 
 from ..model import calibration
+from ..project import lua_reader
 
 
 #: Signed world axes offered by the Camera Axis / Knob Rotation Axis settings,
@@ -192,13 +193,11 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
     preview_panel: bpy.props.EnumProperty(
         name="Panel",
         description="Which panel the compositor previews (§5.3)",
-        items=(
-            ("front", "Front", ""),
-            ("back", "Back", ""),
-            ("folded_front", "Folded Front", ""),
-            ("folded_back", "Folded Back", ""),
+        items=tuple(
+            (panel, panel.replace("_", " ").title(), "")
+            for panel in lua_reader.PANELS
         ),
-        default="front",
+        default=lua_reader.PANELS[0],
     )
     findings: bpy.props.CollectionProperty(type=REBLEND_PG_finding)
     findings_index: bpy.props.IntProperty(default=0)
@@ -218,17 +217,23 @@ def store_report(settings: REBLEND_PG_settings, findings) -> None:
 
 
 def store_merge_items(settings: REBLEND_PG_settings, items) -> None:
-    """Persist a Sync diff, keeping any resolution already picked for a path
-    that is still in the diff (re-running Sync must not reset choices)."""
-    kept = {row.path: row.resolution for row in settings.merge_items}
+    """Persist a Sync diff, keeping any resolution already picked for an item
+    still in the diff (re-running Sync must not reset choices).
+
+    Keyed by (path, status): a choice made while an item was *changed* must
+    not carry over if the same path later shows up as *added* — a stale
+    keep-mine there would silently block the element from ever importing.
+    """
+    kept = {(row.path, row.status): row.resolution
+            for row in settings.merge_items}
     settings.merge_items.clear()
     for item in items:
         row = settings.merge_items.add()
         row.path = item.path
         row.status = item.status
         row.summary = item.summary
-        if item.path in kept:
-            row.resolution = kept[item.path]
+        if (item.path, item.status) in kept:
+            row.resolution = kept[(item.path, item.status)]
 
 
 def attach() -> None:

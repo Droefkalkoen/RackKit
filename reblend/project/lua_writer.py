@@ -114,7 +114,7 @@ def _lex_mask(source: str) -> str:
     while i < n:
         ch = source[i]
         if ch == "-" and source.startswith("--", i):
-            end, kind = _long_bracket_end(source, i + 2)
+            end = _long_bracket_end(source, i + 2)
             if end is None:  # plain line comment
                 end = source.find("\n", i)
                 end = n if end == -1 else end
@@ -130,7 +130,7 @@ def _lex_mask(source: str) -> str:
                 mask[k] = _STRING
             i = end
         elif ch == "[":
-            end, _ = _long_bracket_end(source, i)
+            end = _long_bracket_end(source, i)
             if end is None:
                 i += 1
             else:
@@ -142,20 +142,19 @@ def _lex_mask(source: str) -> str:
     return "".join(mask)
 
 
-def _long_bracket_end(source: str, start: int) -> tuple[int | None, int]:
+def _long_bracket_end(source: str, start: int) -> int | None:
     """If a long bracket ``[=*[`` opens at ``start``, index past its closing
-    ``]=*]`` (or end of source when unterminated); else ``(None, 0)``."""
+    ``]=*]`` (or end of source when unterminated); else ``None``."""
     if start >= len(source) or source[start] != "[":
-        return None, 0
+        return None
     i = start + 1
     while i < len(source) and source[i] == "=":
         i += 1
     if i >= len(source) or source[i] != "[":
-        return None, 0
-    level = i - start - 1
-    closer = "]" + "=" * level + "]"
+        return None
+    closer = "]" + "=" * (i - start - 1) + "]"
     end = source.find(closer, i + 1)
-    return (len(source) if end == -1 else end + len(closer)), level
+    return len(source) if end == -1 else end + len(closer)
 
 
 def _depths(source: str, mask: str) -> list[int]:
@@ -340,12 +339,11 @@ def _graphic_spans(
     spans = []
     i = open_idx + 1
     while i < close_idx:
-        prev = anchors.prev_code_char(i) if anchors.source[i] == "{" else ""
         if (
             anchors.mask[i] == _CODE
             and anchors.source[i] == "{"
             and anchors.depths[i] == inner_depth
-            and prev in ("{", ",", ";")
+            and anchors.prev_code_char(i) in ("{", ",", ";")
         ):
             span = anchors.table_span(i)
             spans.append(span)
@@ -443,7 +441,7 @@ def patch_device_2d(
         raise PatchError(refusals)
 
     patched = _apply_replacements(source, replacements)
-    _verify(source, patched, (edit for edit, _ in live))
+    _verify(device, patched, (edit for edit, _ in live))
     return PatchResult(
         source=patched, applied=[d for _, d in live], unchanged=unchanged
     )
@@ -468,6 +466,9 @@ def patch_device_2d_file(
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(result.source.encode("utf-8"))
+            # mkstemp files are 0600; keep the original's permissions so a
+            # group-readable checkout stays readable to CI and teammates.
+            os.chmod(tmp_name, os.stat(path).st_mode & 0o7777)
             os.replace(tmp_name, path)
         except BaseException:
             with contextlib.suppress(OSError):
@@ -532,12 +533,16 @@ def _apply_replacements(
 
 
 def _verify(
-    original: str, patched: str, edits: Iterable[OffsetEdit | FramesEdit]
+    expected: Device2D, patched: str, edits: Iterable[OffsetEdit | FramesEdit]
 ) -> None:
     """The whole point (§10.2): parse the patched text and demand it equal the
     original tree with exactly the requested edits — nothing more, nothing
-    less, or nothing gets written."""
-    expected = read_device_2d_text(original)
+    less, or nothing gets written.
+
+    ``expected`` is the original source's parse, mutated in place (its caller
+    is done with it) — the one interpreter run that must still happen here is
+    over the *patched* text.
+    """
     for edit in edits:
         node = expected.node(edit.panel, edit.node)
         assert node is not None  # _check_edit guaranteed it

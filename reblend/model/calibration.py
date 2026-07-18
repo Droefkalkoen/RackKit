@@ -50,6 +50,7 @@ __all__ = [
     "panel_px_to_world",
     "world_to_panel_px",
     "element_center_px",
+    "element_offset_px",
 ]
 
 #: World-origin modes: which panel pixel the world (0, 0) lands on. Top-left is
@@ -199,3 +200,16 @@ def element_center_px(
     centre: the device_2D ``offset`` is the frame's top-left corner.
     """
     return (offset_x + frame_w / 2.0, offset_y + frame_h / 2.0)
+
+
+def element_offset_px(
+    center_x: float, center_y: float, frame_w: int, frame_h: int
+) -> tuple[float, float]:
+    """Inverse of :func:`element_center_px`: frame top-left from its centre.
+
+    Import places the registration empty via the forward conversion; export
+    derives the ``offset`` to write back from the empty via this one. They
+    live side by side so the centre convention can never change on one side
+    only — that half-pixel class of drift is a registration bug (§4.2).
+    """
+    return (center_x - frame_w / 2.0, center_y - frame_h / 2.0)

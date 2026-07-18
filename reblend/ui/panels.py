@@ -9,6 +9,7 @@ from __future__ import annotations
 import bpy
 
 from ..model import kinds, schema, state_tables
+from ..project import merge
 
 _SEVERITY_ICONS = {"error": "CANCEL", "warning": "ERROR"}  # ERROR = the ⚠ icon
 _KIND_ICONS = {
@@ -228,7 +229,11 @@ class REBLEND_PT_elements(bpy.types.Panel):
                          icon="FULLSCREEN_ENTER").scope = "MISSING"
 
 
-_STATUS_ICONS = {"added": "ADD", "removed": "TRASH", "changed": "ARROW_LEFTRIGHT"}
+_STATUS_ICONS = {
+    merge.ADDED: "ADD",
+    merge.REMOVED: "TRASH",
+    merge.CHANGED: "ARROW_LEFTRIGHT",
+}
 
 
 class REBLEND_PT_sync(bpy.types.Panel):
@@ -258,7 +263,7 @@ class REBLEND_PT_sync(bpy.types.Panel):
             row = box.row(align=True)
             row.label(text=f"{item.path} · {item.status}",
                       icon=_STATUS_ICONS.get(item.status, "QUESTION"))
-            if item.status != "removed":
+            if item.status != merge.REMOVED:
                 row.prop(item, "resolution", text="")
             for line in _wrap(item.summary):
                 box.label(text=line)

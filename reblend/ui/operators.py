@@ -9,6 +9,7 @@ materialise the results into the scene and report.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import tempfile
@@ -98,16 +99,18 @@ def _materialise(context, spec: ElementSpec, settings, reposition: bool) -> bool
         collection = bpy.data.collections.new(spec.path)
 
     # Fill/update the Lua-derived properties. User-owned properties
-    # (sweep, states, registration, preview frame) are only seeded on
-    # creation, and a frame size the user already chose is never clobbered
-    # by "unknown".
+    # (sweep, states, registration, preview frame) keep their existing values
+    # on update, and a frame size the user already chose is never clobbered
+    # by "unknown". A kept key that is *absent* still gets its default:
+    # data_to_props stamps the current re_schema, so every versioned property
+    # must exist afterwards or the migration that would add it never runs.
     keep = set()
     if not is_new:
         keep = {"re_sweep_deg", "re_states", "re_registration", "re_preview_frame"}
         if spec.frame_w == 0:
             keep |= {"re_frame_w", "re_frame_h"}
     for key, value in schema.data_to_props(spec.to_element_data()).items():
-        if key not in keep:
+        if key not in keep or key not in collection:
             collection[key] = value
     if is_new:
         table = state_tables.default_state_table(spec.kind, spec.frames)
@@ -903,7 +906,7 @@ def _derived_primary_placement(collection, data: schema.ElementData, settings):
     cx, cy = calibration.world_to_panel_px(
         tuple(empty.matrix_world.translation), settings.ppb, origin)
     if data.has_frame_size:
-        cx, cy = cx - data.frame_w / 2.0, cy - data.frame_h / 2.0
+        cx, cy = calibration.element_offset_px(cx, cy, data.frame_w, data.frame_h)
     return schema.Placement(primary.panel, primary.node,
                             float(round(cx)), float(round(cy)))
 
@@ -967,9 +970,15 @@ class REBLEND_OT_export_patch(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
-        # The file now agrees with the scene: keep the re_* mirror true too.
+        # The file now agrees with the scene: keep the re_* mirror true too —
+        # but only for elements whose node the patch could actually reach. An
+        # element skipped as unknown ("run Sync") exported nothing, and
+        # overwriting its mirror would silently desync it from the Lua.
         for collection, data in snapshots:
-            _store_placements(collection, data)
+            primary = data.placements[0] if data.placements else None
+            if primary is not None and link.device.node(
+                    primary.panel, primary.node) is not None:
+                _store_placements(collection, data)
         for change in result.applied:
             print(f"[RE-Blend] patched: {change}")
         self.report(
@@ -1040,6 +1049,7 @@ class REBLEND_OT_apply_sync(bpy.types.Operator):
         items = {item.path: item for item in merge.diff_link(link.specs, elements)}
 
         accepted = kept = flagged = 0
+        rig_stale: list[str] = []
         for row in settings.merge_items:
             item = items.get(row.path)
             if item is None:
@@ -1050,7 +1060,14 @@ class REBLEND_OT_apply_sync(bpy.types.Operator):
             if row.resolution != "THEIRS":
                 kept += 1
                 continue
-            _materialise(context, item.spec, settings, reposition=True)
+            # Reposition only when the accepted change is positional: snapping
+            # the empty on a frames-only accept would silently destroy a
+            # pending, not-yet-exported drag of the registration empty.
+            positional = any(change.field in ("placements", "frame size")
+                             for change in item.changes)
+            _materialise(context, item.spec, settings, reposition=positional)
+            if any(change.field == "frames" for change in item.changes):
+                rig_stale.append(item.path)
             accepted += 1
 
         elements = [schema.props_to_data(c) for c in _element_collections()]
@@ -1059,7 +1076,12 @@ class REBLEND_OT_apply_sync(bpy.types.Operator):
         parts = [f"accepted {accepted} from Lua", f"kept {kept} scene value(s)"]
         if flagged:
             parts.append(f"{flagged} removed node(s) stay flagged, not deleted")
-        self.report({"INFO"}, "; ".join(parts))
+        if rig_stale:
+            # The rig still encodes the old frame count (§4.3) — art and Lua
+            # agree again, but the driver/keyframes must be rebuilt.
+            parts.append("frame count changed, re-run Generate Rig for: "
+                         + ", ".join(sorted(rig_stale)))
+        self.report({"WARNING"} if rig_stale else {"INFO"}, "; ".join(parts))
         return {"FINISHED"}
 
 
@@ -1082,46 +1104,49 @@ def _show_image(context, name: str, pixels) -> "bpy.types.Image":
     # Data colorspace: the composited values are display-referred already
     # (they came out of finished sheets); Blender must not re-transform them.
     bpy_io.set_data_colorspace(image.colorspace_settings)
-    image.pixels[:] = pixels[::-1].reshape(-1)
-    image.update()
+    bpy_io.write_pixels(image, pixels)
     _point_image_editor_at(context, image)
     return image
 
 
-def _point_image_editor_at(context, image) -> None:
+def _point_image_editor_at(context, image):
+    """Show the image in the first open Image Editor; returns that space (its
+    ``image_user`` drives sequence playback) or None headless/without one."""
     for window in context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == "IMAGE_EDITOR":
                 area.spaces.active.image = image
-                return
+                return area.spaces.active
+    return None
 
 
 def _active_element_sheet(op, context):
-    """(collection, data, strip pixels, frame_h) of the active element's
-    rendered sheet, or Nones with the error already reported."""
+    """(data, strip pixels, frame_h) of the active element's rendered sheet,
+    or None with the error already reported."""
     collection = context.collection
     if collection is None or not schema.is_element(collection):
         op.report({"ERROR"}, "active collection is not an RE Element")
-        return None, None, None, 0
+        return None
     data = schema.props_to_data(collection)
     try:
         png = _project_root(context) / "GUI2D" / f"{data.path}.png"
     except LuaConfigError as exc:
         op.report({"ERROR"}, str(exc))
-        return None, None, None, 0
+        return None
     if not png.is_file():
         op.report({"ERROR"}, f"no rendered sheet at {png} — render the element first")
-        return None, None, None, 0
+        return None
     pixels = bpy_io.load_raw_pixels(png)
-    frame_h, remainder = divmod(pixels.shape[0], max(data.frames, 1))
-    if remainder or frame_h == 0:
+    frame_h = stitcher.frame_height(pixels.shape[0], data.frames)
+    if frame_h is None:
         op.report(
             {"ERROR"},
-            f"'{data.path}': sheet height {pixels.shape[0]} is not "
-            f"re_frames ({data.frames}) equal slices — re-render or fix re_frames",
+            f"'{data.path}': sheet height {pixels.shape[0]} does not split "
+            f"into re_frames ({data.frames}) equal slices — re-render or fix "
+            "re_frames",
         )
-        return None, None, None, 0
-    return collection, data, pixels, frame_h
+        return None
+    return data, pixels, frame_h
 
 
 class REBLEND_OT_preview_panel(bpy.types.Operator):
@@ -1169,8 +1194,8 @@ class REBLEND_OT_preview_panel(bpy.types.Operator):
         layers = []
         for data, placements, png, preview_frame in entries:
             pixels = bpy_io.load_raw_pixels(png)
-            frame_h, remainder = divmod(pixels.shape[0], max(data.frames, 1))
-            if remainder or frame_h == 0:
+            frame_h = stitcher.frame_height(pixels.shape[0], data.frames)
+            if frame_h is None:
                 skipped.append(f"{data.path} (height not {data.frames} slices)")
                 continue
             frame = min(max(preview_frame, 0), data.frames - 1)
@@ -1204,9 +1229,10 @@ class REBLEND_OT_contact_sheet(bpy.types.Operator):
     )
 
     def execute(self, context):
-        collection, data, pixels, frame_h = _active_element_sheet(self, context)
-        if collection is None:
+        sheet_source = _active_element_sheet(self, context)
+        if sheet_source is None:
             return {"CANCELLED"}
+        data, pixels, frame_h = sheet_source
         sheet = compositor.contact_sheet(pixels, frame_h, columns=self.columns)
         image = _show_image(context, f"RE Contact {data.path}", sheet)
         self.report(
@@ -1225,35 +1251,42 @@ class REBLEND_OT_flipbook(bpy.types.Operator):
     bl_label = "Flipbook"
 
     def execute(self, context):
-        collection, data, pixels, frame_h = _active_element_sheet(self, context)
-        if collection is None:
+        sheet_source = _active_element_sheet(self, context)
+        if sheet_source is None:
             return {"CANCELLED"}
+        data, pixels, frame_h = sheet_source
         if data.frames < 2:
             self.report({"INFO"}, f"'{data.path}' has 1 frame — nothing to play")
             return {"FINISHED"}
 
-        scratch = Path(tempfile.mkdtemp(prefix="reblend_flip_"))
-        for index, frame in enumerate(stitcher.split_strip(pixels, frame_h)):
-            bpy_io.save_strip(frame, scratch / f"frame_{index + 1:04d}.png",
-                              name=f"reblend_flip_{data.path}_{index}")
-
+        # Drop the previous sequence datablock *before* rewriting its files
+        # (a loaded sequence can pin them on Windows), then reuse one stable
+        # per-sheet scratch dir so repeated flipbooks never pile up in temp.
         name = f"RE Flipbook {data.path}"
         existing = bpy.data.images.get(name)
         if existing is not None:
             bpy.data.images.remove(existing)
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in data.path)
+        scratch = Path(tempfile.gettempdir()) / "reblend_flipbook" / safe
+        scratch.mkdir(parents=True, exist_ok=True)
+        for stale in scratch.glob("frame_*.png"):
+            with contextlib.suppress(OSError):
+                stale.unlink()
+        for index, frame in enumerate(stitcher.split_strip(pixels, frame_h)):
+            bpy_io.save_strip(frame, scratch / f"frame_{index + 1:04d}.png",
+                              name=f"reblend_flip_{data.path}_{index}")
+
         image = bpy.data.images.load(str(scratch / "frame_0001.png"))
         image.name = name
         image.source = "SEQUENCE"
         bpy_io.set_data_colorspace(image.colorspace_settings)
 
-        _point_image_editor_at(context, image)
-        for window in context.window_manager.windows:
-            for area in window.screen.areas:
-                if area.type == "IMAGE_EDITOR" and area.spaces.active.image == image:
-                    user = area.spaces.active.image_user
-                    user.frame_duration = data.frames
-                    user.frame_start = context.scene.frame_start
-                    user.use_cyclic = True
+        space = _point_image_editor_at(context, image)
+        if space is not None:
+            user = space.image_user
+            user.frame_duration = data.frames
+            user.frame_start = context.scene.frame_start
+            user.use_cyclic = True
         self.report(
             {"INFO"},
             f"flipbook: {data.frames} frames in '{image.name}' — play or "

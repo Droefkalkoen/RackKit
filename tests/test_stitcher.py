@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from reblend.render import stitcher
 from reblend.render.stitcher import StitchError, split_strip, stitch, unpremultiply
 
 
@@ -55,3 +56,13 @@ def test_unpremultiply():
     assert out[0, 0] == pytest.approx([0.5, 0.0, 0.0, 0.5])
     assert out[0, 1] == pytest.approx([0.0, 0.0, 0.0, 0.0])
     assert out[0, 2] == pytest.approx([1.0, 1.0, 1.0, 1.0])
+
+
+def test_frame_height_contract():
+    # the "strip height = frameHeight x frameCount" rule as one authority
+    assert stitcher.frame_height(305, 61) == 5
+    assert stitcher.frame_height(130, 1) == 130
+    assert stitcher.frame_height(305, 60) is None   # does not divide
+    assert stitcher.frame_height(305, 0) is None    # no frames, no height
+    assert stitcher.frame_height(305, -3) is None
+    assert stitcher.frame_height(0, 4) is None      # empty strip

@@ -21,6 +21,16 @@ def test_migrate_pre_schema_props_fills_defaults():
     assert props["re_sweep_deg"] == 300.0
 
 
+def test_migrate_v1_adds_preview_frame():
+    # An M1-era element: full v1 property set, no re_preview_frame.
+    props = dict(schema.DEFAULTS)
+    props["re_schema"] = 1
+    del props["re_preview_frame"]
+    assert schema.migrate(props) is True
+    assert props["re_schema"] == schema.SCHEMA_VERSION
+    assert props["re_preview_frame"] == 0
+
+
 def test_migrate_current_version_is_a_noop():
     props = dict(schema.DEFAULTS)
     assert schema.migrate(props) is False

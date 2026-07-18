@@ -8,8 +8,11 @@ to Blender's timeline frames, and automates everything between "scene" and "corr
 in `GUI2D/`" — including two-way synchronisation with the RE project's Lua configuration so
 sizes, offsets, and frame counts can never silently drift.
 
-> **Status: design stage.** No code exists yet. This repository currently holds the design and
-> reference material to build from. See [`ROADMAP.md`](ROADMAP.md) for the plan.
+> **Status: in development.** The M0 render spike passed against the real SDK toolchain, and
+> the M1 (MVP: import, rigs, batch render, validation) and M2 (two-way sync: patch-mode Lua
+> export, re-import merge, panel preview & QA) implementations have landed, pending their pilot
+> exit criteria. The tool lives in the **RE-Blend** tab of Blender's N-panel. See
+> [`ROADMAP.md`](ROADMAP.md) for milestone status.
 
 ## Why this exists
 

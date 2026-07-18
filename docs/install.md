@@ -76,7 +76,7 @@ ln -s /path/to/RE-Blend/reblend "$HOME/.config/blender/5.2/extensions/user_defau
 Because the manifest now lives inside `reblend/`, the linked folder already has everything
 Blender needs — no separate copy step. Then in Blender: **Edit ▸ Preferences ▸ Get Extensions ▸**
 the **⌄** dropdown (top-right) **▸ Refresh Local**, and enable **RE-Blend** in the **Add-ons**
-list. The **RE** tab appears in the 3D-viewport N-panel.
+list. The **RE-Blend** tab appears in the 3D-viewport N-panel.
 
 (If junctions/symlinks are inconvenient, copying the `reblend/` folder to that target works too —
 you just have to recopy after edits.)

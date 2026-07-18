@@ -39,6 +39,7 @@ __all__ = [
     "HDPanel",
     "HDGui2D",
     "read_device_2d",
+    "read_device_2d_text",
     "read_hdgui_2d",
 ]
 
@@ -106,7 +107,11 @@ def _execute_sandboxed(path: Path) -> dict[str, Any]:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise LuaConfigError(path, f"cannot read file: {exc}") from exc
+    return _execute_sandboxed_text(source, path)
 
+
+def _execute_sandboxed_text(source: str, path: Path) -> dict[str, Any]:
+    """Run Lua source in the sandbox; ``path`` only labels errors."""
     runtime = lupa.LuaRuntime(
         unpack_returned_tuples=True,
         register_eval=False,
@@ -208,7 +213,20 @@ class Device2D:
 def read_device_2d(path: Path | str) -> Device2D:
     """Read and parse ``GUI2D/device_2D.lua``."""
     path = Path(path)
-    globals_ = _execute_sandboxed(path)
+    return _parse_device_globals(path, _execute_sandboxed(path))
+
+
+def read_device_2d_text(source: str, name: str = "device_2D.lua") -> Device2D:
+    """Parse device_2D source text without touching disk.
+
+    The patch writer (§6.2) verifies its edits by re-parsing the patched text
+    *before* anything is written; ``name`` only labels errors.
+    """
+    path = Path(name)
+    return _parse_device_globals(path, _execute_sandboxed_text(source, path))
+
+
+def _parse_device_globals(path: Path, globals_: dict[str, Any]) -> Device2D:
     format_version = _require_format_version(path, globals_)
 
     panels: dict[str, dict[str, Node2D]] = {}

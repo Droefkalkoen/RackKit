@@ -13,10 +13,11 @@ Implementation has started with the Blender-independent layers. Repository conte
   with the design doc, the design doc wins and the roadmap gets fixed.
 - `README.md` — public-facing overview; keep it consistent with the design doc.
 - `reblend/` — the extension package (import name `reblend`; distribution/repo name `re-blend`).
-  The M1 (MVP) code is in place across the planned module layout: `project/` (sandboxed Lua
-  reading, motherboard steps, PNG metadata, project link/import, validation engine), `model/`
-  (versioned RE Element schema + migrations, kinds, state tables, calibration, rigs), `render/`
-  (stitcher, output validators, Blender I/O, batch renderer), `ui/` (N-panel, operators). Only
+  The M1 (MVP) and M2 (sync) code is in place across the planned module layout: `project/`
+  (sandboxed Lua reading, patch-mode Lua writer + re-import merge, motherboard steps, PNG
+  metadata, project link/import, validation engine), `model/` (versioned RE Element schema +
+  migrations, kinds, state tables, calibration, rigs), `render/` (stitcher, panel compositor +
+  contact sheet, output validators, Blender I/O, batch renderer), `ui/` (N-panel, operators). Only
   `model/rigs.py`, `render/bpy_io.py`, `render/renderer.py`, and `ui/*` import `bpy` (lazily
   via `reblend.register()`); everything else is pure Python under test.
 - `tests/` — pytest suite with SDK-convention fixtures under `tests/fixtures/`.
@@ -105,7 +106,7 @@ Planned module layout:
 - `render/` — render queue, per-element scene push/pop, strip stitcher (numpy over `bpy` image
   pixels, no external image dependency), overflow/alpha validators, flipbook/contact sheet, panel
   compositor.
-- `ui/` — N-panel "RE" tab, element list with status badges, validation report, state playground.
+- `ui/` — N-panel "RE-Blend" tab, element list with status badges, validation report, state playground.
 - `cli.py` — headless entry points.
 
 ### Two-way Lua sync (design §6)

@@ -440,7 +440,7 @@ opaque binary drop.
     resolution, colour management), strip stitcher (numpy over `bpy` image pixels — no
     external image dependency), overflow/alpha validators, flipbook/contact sheet,
     panel compositor.
-  - `ui/` — N-panel tab ("RE"), element list with status badges (synced / dirty /
+  - `ui/` — N-panel tab ("RE-Blend"), element list with status badges (synced / dirty /
     missing / error), validation report, state playground.
   - `cli.py` — headless entry points (§7).
 - **No SDK code or assets are bundled.** RE-Blend points at tool *paths* the user

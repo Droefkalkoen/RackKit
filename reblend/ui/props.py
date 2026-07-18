@@ -24,6 +24,12 @@ _AXIS_ITEMS = (
 )
 
 
+#: The add-on package registered with Blender — ``reblend`` as a plain add-on,
+#: ``bl_ext.<repo>.reblend`` when installed as an extension. This module is
+#: ``<package>.ui.props``, so the add-on id is two levels up.
+ADDON_ID = __package__.rsplit(".", 1)[0]
+
+
 class REBLEND_PG_finding(bpy.types.PropertyGroup):
     """One row of the last validation report (mirrors validation.Finding)."""
 
@@ -32,6 +38,61 @@ class REBLEND_PG_finding(bpy.types.PropertyGroup):
     message: bpy.props.StringProperty()
     subject: bpy.props.StringProperty()
     panel: bpy.props.StringProperty()
+
+
+class REBLEND_PG_merge_item(bpy.types.PropertyGroup):
+    """One row of the last Sync diff (mirrors merge.MergeItem).
+
+    ``resolution`` is the per-item accept-theirs/keep-mine choice (§6.1);
+    removed items are flag-only (never auto-deleted), so the resolution is
+    ignored for them.
+    """
+
+    path: bpy.props.StringProperty()
+    status: bpy.props.StringProperty()
+    summary: bpy.props.StringProperty()
+    resolution: bpy.props.EnumProperty(
+        name="Resolution",
+        items=(
+            ("THEIRS", "Theirs", "Take the value from the project's Lua files"),
+            ("MINE", "Mine", "Keep the scene's value (export writes it back)"),
+        ),
+        default="THEIRS",
+    )
+
+
+class REBLEND_AP_preferences(bpy.types.AddonPreferences):
+    """Per-machine settings: SDK tool paths (§5.3).
+
+    Deliberately add-on preferences, not scene properties — tool paths differ
+    per machine and must never be committed with a project or a ``.blend``.
+    """
+
+    bl_idname = ADDON_ID
+
+    re2drender_path: bpy.props.StringProperty(
+        name="RE2DRender",
+        description="Path to the SDK's RE2DRender executable (per machine)",
+        subtype="FILE_PATH",
+    )
+    re2dpreview_path: bpy.props.StringProperty(
+        name="RE2DPreview",
+        description="Path to the SDK's RE2DPreview executable (per machine)",
+        subtype="FILE_PATH",
+    )
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.label(text="SDK tool paths are per-machine settings; they are "
+                       "never stored in the project or the .blend.")
+        col.prop(self, "re2drender_path")
+        col.prop(self, "re2dpreview_path")
+
+
+def tool_preferences(context):
+    """This machine's add-on preferences, or None outside a registered add-on."""
+    addon = context.preferences.addons.get(ADDON_ID)
+    return addon.preferences if addon is not None else None
 
 
 class REBLEND_PG_settings(bpy.types.PropertyGroup):
@@ -128,8 +189,21 @@ class REBLEND_PG_settings(bpy.types.PropertyGroup):
         ),
         default="SHADOW",
     )
+    preview_panel: bpy.props.EnumProperty(
+        name="Panel",
+        description="Which panel the compositor previews (§5.3)",
+        items=(
+            ("front", "Front", ""),
+            ("back", "Back", ""),
+            ("folded_front", "Folded Front", ""),
+            ("folded_back", "Folded Back", ""),
+        ),
+        default="front",
+    )
     findings: bpy.props.CollectionProperty(type=REBLEND_PG_finding)
     findings_index: bpy.props.IntProperty(default=0)
+    merge_items: bpy.props.CollectionProperty(type=REBLEND_PG_merge_item)
+    merge_index: bpy.props.IntProperty(default=0)
 
 
 def store_report(settings: REBLEND_PG_settings, findings) -> None:
@@ -143,6 +217,20 @@ def store_report(settings: REBLEND_PG_settings, findings) -> None:
         row.panel = finding.panel
 
 
+def store_merge_items(settings: REBLEND_PG_settings, items) -> None:
+    """Persist a Sync diff, keeping any resolution already picked for a path
+    that is still in the diff (re-running Sync must not reset choices)."""
+    kept = {row.path: row.resolution for row in settings.merge_items}
+    settings.merge_items.clear()
+    for item in items:
+        row = settings.merge_items.add()
+        row.path = item.path
+        row.status = item.status
+        row.summary = item.summary
+        if item.path in kept:
+            row.resolution = kept[item.path]
+
+
 def attach() -> None:
     bpy.types.Scene.reblend = bpy.props.PointerProperty(type=REBLEND_PG_settings)
 
@@ -151,4 +239,9 @@ def detach() -> None:
     del bpy.types.Scene.reblend
 
 
-CLASSES = (REBLEND_PG_finding, REBLEND_PG_settings)
+CLASSES = (
+    REBLEND_PG_finding,
+    REBLEND_PG_merge_item,
+    REBLEND_AP_preferences,
+    REBLEND_PG_settings,
+)

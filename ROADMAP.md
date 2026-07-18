@@ -86,6 +86,20 @@ press render, get correct sheets" replaces the entire manual crop-and-stack work
 **Done when:** moving a control in Blender updates its `device_2D.lua` offset, RE2DPreview
 confirms the move, and RE Edit still loads the patched files without complaint.
 
+**Status — implementation landed, exit criterion pending.** All four M2 work items are coded:
+patch-mode export (`project/lua_writer.py` — comment/string-aware anchored edits to only the
+`offset`/`frames` literals, every ambiguity refused with the reason, and the patched text
+re-parsed and compared against the intended tree *before* the file is atomically replaced),
+re-import merge (`project/merge.py` diff + per-item accept-theirs/keep-mine in the Sync panel;
+removed nodes are flagged, never deleted), the panel compositor preview with the state
+playground plus flipbook and contact sheet (`render/compositor.py` + operators), and one-click
+RE2DRender/RE2DPreview launch (paths live in per-machine add-on preferences, never in the
+repo). Write-path features are gated on interop fixtures in the test suite: the SDK-convention
+`silence_detector` project and a hostile-formatting `patch_styles` fixture (comment/string
+decoys, single-line nodes, quoted keys, CRLF) — every patch must round-trip through the real
+Lua interpreter byte-exact outside the edited literals. What remains is the pilot pass: move a
+control, export, and confirm in RE2DPreview and RE Edit on a machine with Blender 4.2 LTS+.
+
 ## M3 — Production: make it a build step
 
 - **Headless CLI** (§7): `render --all | --dirty | --element`, `validate` with a non-zero exit
